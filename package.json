@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "deploy:convex": "npx convex deploy -y --typecheck disable",
     "deploy:daytona": "tsx src/deploy/daytona.ts",
+    "deploy:ui": "tsx src/deploy/vercel-ui.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
@@ -21,7 +22,10 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
+    "@chat-adapter/slack": "^4.15.0",
+    "@chat-adapter/state-memory": "^4.15.0",
     "@daytonaio/sdk": "^0.148.0",
+    "chat": "^4.15.0",
     "convex": "^1.32.0"
   }
 }

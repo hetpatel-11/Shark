@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 
 import { loadConfig, maskSecret } from "./config.js";
+import { SlackChatBot } from "./integrations/slack-chat.js";
 import { ConvexStateStore } from "./runtime/convex-store.js";
 import { SharkEngine } from "./runtime/engine.js";
 import { FileStateStore } from "./runtime/file-store.js";
@@ -13,6 +14,11 @@ const store: StateStore = config.convexUrl
   ? new ConvexStateStore(config.convexUrl)
   : new FileStateStore(config.stateFile);
 const engine = new SharkEngine(config, store);
+const slackBot = new SlackChatBot(
+  config,
+  (text, source) => engine.enqueueOperatorCommand(text, source),
+  () => engine.snapshot(),
+);
 
 const args = new Set(process.argv.slice(2));
 
@@ -27,6 +33,10 @@ if (args.has("--smoke")) {
 const server = createServer(async (request, response) => {
   const url = request.url ?? "/";
   const method = request.method ?? "GET";
+
+  if (method === "OPTIONS" && (url.startsWith("/api/") || url.startsWith("/slack/"))) {
+    return sendEmpty(response, 204);
+  }
 
   if (method === "GET" && url === "/healthz") {
     return sendJson(response, 200, {
@@ -74,6 +84,17 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (url === "/slack/events") {
+    const body = await readBody(request);
+    const slackRequest = new Request(`http://localhost:${config.port}${url}`, {
+      method,
+      headers: normalizeHeaders(request.headers),
+      body: method === "GET" ? undefined : body,
+    });
+    const slackResponse = await slackBot.handleWebhook(slackRequest);
+    return sendFetchResponse(response, slackResponse);
+  }
+
   sendJson(response, 404, { error: "Not found" });
 });
 
@@ -83,6 +104,7 @@ server.listen(config.port, () => {
     `State file: ${config.stateFile}`,
     `Workspace: ${config.workspaceDir}`,
     `Storage: ${store.kind}`,
+    `Slack bot webhook: ${slackBot.isEnabled() ? "/slack/events" : "disabled (missing signing secret)"}`,
     `Anthropic: ${maskSecret(config.anthropicApiKey)}`,
     `Supermemory: ${maskSecret(config.supermemoryApiKey)}`,
     `Browser Use: ${maskSecret(config.browserUseApiKey)}`,
@@ -115,8 +137,34 @@ function sendJson(
 ): void {
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
+    ...corsHeaders(),
   });
   response.end(JSON.stringify(payload, null, 2));
+}
+
+function sendEmpty(
+  response: ServerResponse<IncomingMessage>,
+  status: number,
+): void {
+  response.writeHead(status, corsHeaders());
+  response.end();
+}
+
+async function sendFetchResponse(
+  response: ServerResponse<IncomingMessage>,
+  fetchResponse: Response,
+): Promise<void> {
+  const text = await fetchResponse.text();
+  const headers: Record<string, string> = {};
+  fetchResponse.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+
+  response.writeHead(fetchResponse.status, {
+    ...headers,
+    ...corsHeaders(),
+  });
+  response.end(text);
 }
 
 async function readBody(request: IncomingMessage): Promise<string> {
@@ -130,4 +178,24 @@ async function readBody(request: IncomingMessage): Promise<string> {
     });
     request.on("error", reject);
   });
+}
+
+function normalizeHeaders(headers: IncomingMessage["headers"]): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (typeof value === "string") {
+      normalized[key] = value;
+    } else if (Array.isArray(value)) {
+      normalized[key] = value.join(", ");
+    }
+  }
+  return normalized;
+}
+
+function corsHeaders(): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  };
 }

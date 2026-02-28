@@ -18,6 +18,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SharkConfig {
     agentMailApiKey: mergedEnv.AGENTMAIL_API_KEY,
     slackBotToken: mergedEnv.SLACK_BOT_TOKEN,
     slackAppToken: mergedEnv.SLACK_APP_TOKEN,
+    slackSigningSecret: mergedEnv.SLACK_SIGNING_SECRET,
     slackChannel: mergedEnv.SLACK_DEFAULT_CHANNEL,
     vercelToken: mergedEnv.VERCEL_TOKEN,
     openAiApiKey: mergedEnv.OPENAI_API_KEY,

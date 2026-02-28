@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shark Ops</title>
+  <style>
+    :root {
+      --bg: #f7f3ef;
+      --bg-2: #efe7dd;
+      --panel: rgba(255, 252, 248, 0.88);
+      --panel-strong: rgba(255, 255, 255, 0.96);
+      --ink: #241b19;
+      --muted: #746560;
+      --line: rgba(126, 101, 87, 0.18);
+      --accent: #e88f8f;
+      --accent-strong: #d96767;
+      --accent-soft: rgba(232, 143, 143, 0.12);
+      --shadow: 0 22px 60px rgba(80, 55, 42, 0.12);
+    }
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Nunito Sans", "Helvetica Neue", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top center, rgba(232, 143, 143, 0.22), transparent 28%),
+        radial-gradient(circle at left 18%, rgba(255, 255, 255, 0.8), transparent 30%),
+        linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+      min-height: 100vh;
+    }
+    main {
+      max-width: 1260px;
+      margin: 0 auto;
+      padding: 22px;
+    }
+    .shell {
+      background: rgba(255, 250, 246, 0.78);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+      min-height: calc(100vh - 44px);
+      overflow: hidden;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.46);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-mark {
+      width: 40px;
+      height: 40px;
+      border-radius: 14px;
+      background:
+        radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9), transparent 32%),
+        linear-gradient(135deg, var(--accent), var(--accent-strong));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.65);
+    }
+    .brand h1,
+    .panel-title {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.1;
+    }
+    .brand p,
+    .muted {
+      margin: 0;
+      color: var(--muted);
+    }
+    .capsule {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 10px 16px;
+      box-shadow: 0 6px 20px rgba(80, 55, 42, 0.08);
+      font-size: 14px;
+    }
+    .capsule strong {
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+      min-height: calc(100vh - 121px);
+    }
+    .chat-panel {
+      position: relative;
+      border-right: 1px solid var(--line);
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      min-height: 0;
+    }
+    .summary-card,
+    .side-card,
+    .composer {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: 0 10px 30px rgba(80, 55, 42, 0.08);
+      backdrop-filter: blur(12px);
+    }
+    .summary-card {
+      padding: 18px 20px;
+    }
+    .summary-card h2 {
+      margin: 6px 0 8px;
+      font-size: 22px;
+    }
+    .status-row,
+    .meta-grid,
+    .control-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    .status-pill,
+    .chip,
+    .provider-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.72);
+    }
+    .status-pill::before,
+    .provider-pill::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #7c7c7c;
+    }
+    .status-pill.live::before,
+    .provider-pill.ready::before {
+      background: #36b37e;
+      box-shadow: 0 0 0 4px rgba(54, 179, 126, 0.12);
+    }
+    .status-pill.idle::before,
+    .provider-pill.blocked::before {
+      background: var(--accent-strong);
+      box-shadow: 0 0 0 4px rgba(217, 103, 103, 0.1);
+    }
+    .meta-grid {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .control-row {
+      margin-top: 14px;
+    }
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 11px 15px;
+      background: #1f1d1d;
+      color: white;
+      font: inherit;
+      cursor: pointer;
+      transition: transform 160ms ease, opacity 160ms ease;
+    }
+    button:hover { transform: translateY(-1px); }
+    button.secondary {
+      background: rgba(255,255,255,0.86);
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+    button.accent {
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+    }
+    .feed {
+      min-height: 0;
+      overflow: auto;
+      padding-right: 6px;
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+    .feed-entry {
+      display: grid;
+      gap: 8px;
+    }
+    .feed-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .feed-card {
+      background: var(--panel-strong);
+      border: 1px solid rgba(126, 101, 87, 0.12);
+      border-radius: 20px;
+      padding: 14px 16px;
+      box-shadow: 0 10px 24px rgba(80, 55, 42, 0.06);
+    }
+    .feed-card p {
+      margin: 8px 0 0;
+      line-height: 1.45;
+      color: var(--ink);
+    }
+    .kind {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--accent-strong);
+    }
+    .kind::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+    .composer-wrap {
+      position: sticky;
+      bottom: 0;
+      padding-top: 4px;
+      background: linear-gradient(180deg, rgba(247,243,239,0) 0%, rgba(247,243,239,0.92) 24%);
+    }
+    .composer {
+      padding: 14px;
+    }
+    .composer-label {
+      margin: 0 0 10px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .composer-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: end;
+    }
+    textarea {
+      width: 100%;
+      min-height: 72px;
+      resize: vertical;
+      padding: 14px 16px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      font: inherit;
+      color: var(--ink);
+      background: rgba(255,255,255,0.92);
+      box-sizing: border-box;
+    }
+    .send {
+      width: 54px;
+      height: 54px;
+      padding: 0;
+      border-radius: 18px;
+    }
+    .side-panel {
+      padding: 22px;
+      display: grid;
+      gap: 16px;
+      align-content: start;
+      background: rgba(255,255,255,0.2);
+    }
+    .side-card {
+      padding: 18px;
+    }
+    .panel-title {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .task-list,
+    .provider-list {
+      display: grid;
+      gap: 10px;
+    }
+    .task-item {
+      padding: 12px 13px;
+      border-radius: 18px;
+      border: 1px solid rgba(126, 101, 87, 0.12);
+      background: rgba(255,255,255,0.7);
+    }
+    .task-item strong {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 6px;
+    }
+    .task-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .score {
+      display: grid;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .score strong {
+      color: var(--ink);
+    }
+    .tiny {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    @media (max-width: 980px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+      .chat-panel {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+    }
+    @media (max-width: 640px) {
+      main { padding: 12px; }
+      .shell {
+        min-height: calc(100vh - 24px);
+        border-radius: 22px;
+      }
+      .topbar,
+      .chat-panel,
+      .side-panel {
+        padding: 16px;
+      }
+      .composer-row {
+        grid-template-columns: 1fr;
+      }
+      .send {
+        width: 100%;
+        height: auto;
+        padding: 12px 14px;
+        border-radius: 999px;
+      }
+      .capsule {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark"></div>
+          <div>
+            <h1>Shark</h1>
+            <p id="subtitle">Connecting to remote runtime...</p>
+          </div>
+        </div>
+        <div class="capsule">
+          <span>Turns</span>
+          <strong id="turns">0</strong>
+          <span class="tiny" id="runtimeBadge">Runtime pending</span>
+        </div>
+      </header>
+
+      <section class="layout">
+        <section class="chat-panel">
+          <article class="summary-card">
+            <div class="status-row">
+              <span class="status-pill" id="loopStatus">Loop pending</span>
+              <span class="chip" id="modeChip">Mode unknown</span>
+              <span class="chip" id="storageChip">Storage unknown</span>
+            </div>
+            <h2 id="headline">Loading startup thesis...</h2>
+            <p class="muted" id="summary">Waiting for Shark state.</p>
+            <div class="meta-grid" id="meta"></div>
+            <div class="control-row">
+              <button onclick="runAction('/api/start')">Start</button>
+              <button class="secondary" onclick="runAction('/api/stop')">Pause</button>
+              <button class="accent" onclick="runAction('/api/run-once')">Run Once</button>
+            </div>
+          </article>
+
+          <section class="feed" id="events"></section>
+
+          <div class="composer-wrap">
+            <form class="composer" onsubmit="sendCommand(event)">
+              <p class="composer-label">Steer Shark in real time. It will queue your instruction and continue autonomously.</p>
+              <div class="composer-row">
+                <textarea id="command" placeholder="Steer Shark: focus on pricing, ship the landing page, message VCs, tighten onboarding..."></textarea>
+                <button class="accent send" type="submit">Send</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <aside class="side-panel">
+          <article class="side-card">
+            <div class="panel-title">Startup Thesis</div>
+            <div id="thesis"></div>
+          </article>
+
+          <article class="side-card">
+            <div class="panel-title">Pending Work</div>
+            <div class="task-list" id="tasks"></div>
+          </article>
+
+          <article class="side-card">
+            <div class="panel-title">Providers</div>
+            <div class="provider-list" id="providers"></div>
+          </article>
+
+          <article class="side-card">
+            <div class="panel-title">Score</div>
+            <div class="score" id="score"></div>
+          </article>
+        </aside>
+      </section>
+    </section>
+  </main>
+  <script src="./runtime-config.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

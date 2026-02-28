@@ -45,6 +45,7 @@ export interface SharkConfig {
   agentMailApiKey?: string;
   slackBotToken?: string;
   slackAppToken?: string;
+  slackSigningSecret?: string;
   slackChannel?: string;
   vercelToken?: string;
   openAiApiKey?: string;

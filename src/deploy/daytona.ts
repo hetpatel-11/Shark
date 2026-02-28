@@ -5,6 +5,7 @@ import { basename, join, posix, relative } from "node:path";
 import { CodeLanguage, Daytona } from "@daytonaio/sdk";
 
 import { loadConfig } from "../config.js";
+import { deployVercelUi } from "./vercel-ui.js";
 
 const config = loadConfig();
 const deploymentEnv = loadDeploymentEnv();
@@ -62,6 +63,13 @@ const preview = await sandbox.getPreviewLink(config.port);
 process.stdout.write(`Sandbox ID: ${sandbox.id}\n`);
 process.stdout.write(`Preview URL: ${preview.url}\n`);
 process.stdout.write(`Preview Token: ${preview.token}\n`);
+
+if (config.vercelToken) {
+  process.stdout.write("Deploying operator UI to Vercel...\n");
+  const uiUrl = await deployVercelUi(preview.url, config.vercelToken);
+  process.stdout.write(`Vercel UI URL: ${uiUrl}\n`);
+}
+
 process.stdout.write("Shark is now running remotely inside Daytona.\n");
 
 async function uploadPath(
@@ -129,6 +137,7 @@ function collectRuntimeEnv(): Record<string, string> {
   addIfPresent(runtimeEnv, "AGENTMAIL_API_KEY", config.agentMailApiKey);
   addIfPresent(runtimeEnv, "SLACK_BOT_TOKEN", config.slackBotToken);
   addIfPresent(runtimeEnv, "SLACK_APP_TOKEN", config.slackAppToken);
+  addIfPresent(runtimeEnv, "SLACK_SIGNING_SECRET", config.slackSigningSecret);
   addIfPresent(runtimeEnv, "SLACK_DEFAULT_CHANNEL", config.slackChannel);
   addIfPresent(runtimeEnv, "VERCEL_TOKEN", config.vercelToken);
   addIfPresent(runtimeEnv, "OPENAI_API_KEY", config.openAiApiKey);
