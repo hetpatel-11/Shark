@@ -1,5 +1,6 @@
 import {
   type ApprovalRequest,
+  type ProviderHealth,
   type RunState,
   SHARK_MODES,
   type SharkEvent,
@@ -12,8 +13,11 @@ export function createInitialRunState(runId: string): RunState {
   return {
     runId,
     mode: "discovery",
+    tasks: [],
     queuedCommands: [],
     recentEvents: [],
+    providerHealth: {},
+    isRunning: false,
   };
 }
 
@@ -32,12 +36,23 @@ export function transitionMode(state: RunState, nextMode: SharkMode): RunState {
 }
 
 export function beginTask(state: RunState, task: Task): RunState {
+  const updatedAt = new Date().toISOString();
   const next: RunState = {
     ...state,
     currentTask: {
       ...task,
       status: "in_progress",
+      updatedAt,
     },
+    tasks: state.tasks.map((item) =>
+      item.id === task.id
+        ? {
+            ...item,
+            status: "in_progress",
+            updatedAt,
+          }
+        : item,
+    ),
   };
 
   return withEvent(next, {
@@ -54,12 +69,25 @@ export function completeTask(state: RunState, summary: string): RunState {
     return state;
   }
 
+  const updatedAt = new Date().toISOString();
   const next: RunState = {
     ...state,
     currentTask: {
       ...state.currentTask,
       status: "completed",
+      output: summary,
+      updatedAt,
     },
+    tasks: state.tasks.map((item) =>
+      item.id === state.currentTask?.id
+        ? {
+            ...item,
+            status: "completed",
+            output: summary,
+            updatedAt,
+          }
+        : item,
+    ),
   };
 
   return withEvent(next, {
@@ -94,6 +122,44 @@ export function canExecuteTool(action: ToolAction): boolean {
   return !action.requiresApproval || action.riskLevel !== "critical";
 }
 
+export function queueTask(state: RunState, task: Task): RunState {
+  return {
+    ...state,
+    tasks: [...state.tasks, task].sort((left, right) => right.priority - left.priority),
+  };
+}
+
+export function setProviderHealth(
+  state: RunState,
+  tool: ToolAction["tool"],
+  health: ProviderHealth,
+): RunState {
+  return {
+    ...state,
+    providerHealth: {
+      ...state.providerHealth,
+      [tool]: health,
+    },
+  };
+}
+
+export function enqueueCommand(
+  state: RunState,
+  command: RunState["queuedCommands"][number],
+): RunState {
+  return {
+    ...state,
+    queuedCommands: [...state.queuedCommands, command],
+  };
+}
+
+export function clearCommands(state: RunState): RunState {
+  return {
+    ...state,
+    queuedCommands: [],
+  };
+}
+
 export function withEvent(state: RunState, event: SharkEvent): RunState {
   const recentEvents = [event, ...state.recentEvents].slice(0, 50);
   const nextMode = event.kind === "mode_changed"
@@ -104,6 +170,7 @@ export function withEvent(state: RunState, event: SharkEvent): RunState {
     ...state,
     mode: nextMode,
     recentEvents,
+    lastIterationAt: event.timestamp,
   };
 }
 

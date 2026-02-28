@@ -3,15 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Autonomous founder and operator scaffold for Shark.",
+  "description": "Autonomous founder and operator runtime for Shark.",
   "scripts": {
+    "dev": "tsx src/main.ts",
     "build": "tsc -p tsconfig.json",
+    "deploy:convex": "npx convex deploy -y --typecheck disable",
+    "deploy:daytona": "tsx src/deploy/daytona.ts",
+    "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "echo \"lint not implemented yet\"",
-    "test": "echo \"test not implemented yet\"",
-    "smoke": "echo \"smoke not implemented yet\""
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test dist/runtime/*.test.js",
+    "smoke": "node dist/main.js --smoke"
   },
   "devDependencies": {
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.5",
     "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "@daytonaio/sdk": "^0.148.0",
+    "convex": "^1.32.0"
   }
 }

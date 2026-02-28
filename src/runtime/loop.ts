@@ -36,6 +36,7 @@ export function applyDecision(
   if (decision.selectedTask) {
     next = beginTask(next, decision.selectedTask);
     next = completeTask(next, decision.summary);
+    next = transitionMode(next, "planning");
   }
 
   return next;
@@ -52,6 +53,10 @@ export function defaultNextMode(state: RunState): SharkMode {
 
   if (state.currentTask?.status === "in_progress") {
     return state.currentTask.mode;
+  }
+
+  if (state.tasks.some((task) => task.status === "pending")) {
+    return "building";
   }
 
   return "planning";

@@ -1,1 +1,8 @@
 plan.md
+.env
+.env.local
+.env.*.local
+dist
+node_modules
+.shark
+convex/_generated

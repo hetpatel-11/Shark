@@ -12,6 +12,17 @@ export const RISK_LEVELS = ["low", "medium", "critical"] as const;
 
 export type RiskLevel = (typeof RISK_LEVELS)[number];
 
+export const TASK_KINDS = [
+  "research",
+  "memory",
+  "messaging",
+  "deployment",
+  "operations",
+  "artifact",
+] as const;
+
+export type TaskKind = (typeof TASK_KINDS)[number];
+
 export type ToolName =
   | "anthropic"
   | "daytona"
@@ -23,17 +34,25 @@ export type ToolName =
   | "vercel";
 
 export interface SharkConfig {
-  anthropicApiKey: string;
-  daytonaApiKey: string;
-  supermemoryApiKey: string;
-  convexDeployment: string;
-  convexUrl: string;
-  browserUseApiKey: string;
-  agentMailApiKey: string;
-  slackBotToken: string;
-  slackAppToken: string;
-  vercelToken: string;
-  openAiApiKey: string;
+  anthropicApiKey?: string;
+  anthropicModel: string;
+  daytonaApiKey?: string;
+  supermemoryApiKey?: string;
+  convexDeployment?: string;
+  convexUrl?: string;
+  convexDeployKey?: string;
+  browserUseApiKey?: string;
+  agentMailApiKey?: string;
+  slackBotToken?: string;
+  slackAppToken?: string;
+  slackChannel?: string;
+  vercelToken?: string;
+  openAiApiKey?: string;
+  loopIntervalMs: number;
+  port: number;
+  stateFile: string;
+  workspaceDir: string;
+  autoStart: boolean;
 }
 
 export interface OpportunityScore {
@@ -61,10 +80,13 @@ export interface Task {
   id: string;
   title: string;
   description: string;
+  kind: TaskKind;
   mode: Exclude<SharkMode, "blocked">;
   priority: number;
   blockedByApproval: boolean;
   status: "pending" | "in_progress" | "completed" | "failed";
+  output?: string;
+  updatedAt: string;
 }
 
 export interface ApprovalRequest {
@@ -107,8 +129,14 @@ export interface RunState {
   thesis?: VentureThesis;
   currentTask?: Task;
   pendingApproval?: ApprovalRequest;
+  mailboxAddress?: string;
+  tasks: Task[];
   queuedCommands: OperatorCommand[];
   recentEvents: SharkEvent[];
+  providerHealth: Partial<Record<ToolName, ProviderHealth>>;
+  lastSummary?: string;
+  isRunning: boolean;
+  lastIterationAt?: string;
 }
 
 export interface ToolAction {
@@ -116,4 +144,27 @@ export interface ToolAction {
   action: string;
   riskLevel: RiskLevel;
   requiresApproval: boolean;
+}
+
+export interface ProviderHealth {
+  ok: boolean;
+  checkedAt: string;
+  message: string;
+}
+
+export interface DashboardSnapshot {
+  runId: string;
+  mode: SharkMode;
+  isRunning: boolean;
+  thesis?: VentureThesis;
+  mailboxAddress?: string;
+  currentTask?: Task;
+  pendingTasks: Task[];
+  pendingApproval?: ApprovalRequest;
+  providerHealth: Partial<Record<ToolName, ProviderHealth>>;
+  queuedCommands: OperatorCommand[];
+  lastSummary?: string;
+  recentEvents: SharkEvent[];
+  lastIterationAt?: string;
+  storage: "file" | "convex";
 }
