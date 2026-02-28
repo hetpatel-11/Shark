@@ -1,0 +1,17 @@
+{
+  "name": "shark",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Autonomous founder and operator scaffold for Shark.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo \"lint not implemented yet\"",
+    "test": "echo \"test not implemented yet\"",
+    "smoke": "echo \"smoke not implemented yet\""
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}
