@@ -10,7 +10,7 @@ import type { StateStore } from "./runtime/store.js";
 
 const config = loadConfig();
 const store: StateStore = config.convexUrl
-  ? new ConvexStateStore(config.convexUrl)
+  ? new ConvexStateStore(config.convexUrl, config.stateFile)
   : new FileStateStore(config.stateFile);
 const engine = new SharkEngine(config, store);
 const slackBot = new SlackChatBot(

@@ -8,15 +8,21 @@ interface AgentRunResult {
   text: string;
   sessionId?: string;
   turns?: number;
+  aborted?: boolean;
 }
 
 interface AgentRunOptions {
   maxTurns?: number;
   resume?: boolean;
+  lightweight?: boolean;
+  timeoutMs?: number;
+  retries?: number;
 }
 
 export class AnthropicAdapter {
   private lastSessionId?: string;
+  private activeAbortController?: AbortController;
+  private activeQuery?: ReturnType<typeof query>;
 
   constructor(private readonly config: SharkConfig) {}
 
@@ -37,81 +43,149 @@ export class AnthropicAdapter {
     }
 
     await mkdir(this.config.workspaceDir, { recursive: true });
+    const retries = Math.max(0, options.retries ?? 1);
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        const lightweight = options.lightweight === true;
+        const abortController = new AbortController();
+        const timeoutMs = options.timeoutMs ?? (lightweight ? 45_000 : 300_000);
+        const stream = query({
+          prompt,
+          options: {
+            abortController,
+            cwd: this.config.workspaceDir,
+            executable: "bun",
+            model: normalizeModel(this.config.anthropicModel),
+            systemPrompt: {
+              type: "preset",
+              preset: "claude_code",
+              append: buildSystemPrompt(),
+            },
+            env: {
+              ...process.env,
+              ANTHROPIC_API_KEY: this.config.anthropicApiKey,
+              ANTHROPIC_MODEL: this.config.anthropicModel,
+              CLAUDE_AGENT_SDK_CLIENT_APP: "shark/0.1.0",
+            },
+            ...(lightweight
+              ? {
+                  maxTurns: options.maxTurns ?? 2,
+                  resume: undefined,
+                }
+              : {
+                  additionalDirectories: [process.cwd()],
+                  tools: {
+                    type: "preset" as const,
+                    preset: "claude_code" as const,
+                  },
+                  allowedTools: [
+                    "Read",
+                    "Write",
+                    "Edit",
+                    "Bash",
+                    "Glob",
+                    "Grep",
+                    "WebSearch",
+                    "WebFetch",
+                    "Task",
+                  ],
+                  permissionMode: "bypassPermissions" as const,
+                  allowDangerouslySkipPermissions: true,
+                  agents: {
+                    researcher: {
+                      description: "Focused web and competitive intelligence subagent.",
+                      prompt: [
+                        "Use web research tools to gather current market context, competitors, positioning, and regulatory context.",
+                        "Return concise summaries with practical next actions.",
+                      ].join(" "),
+                      tools: ["WebSearch", "WebFetch", "Read", "Write"],
+                    },
+                    builder: {
+                      description: "Focused code and shipping subagent.",
+                      prompt: [
+                        "Use filesystem and shell tools to build artifacts, code, docs, and deployable assets inside the Shark workspace.",
+                        "Prefer concrete outputs over abstract plans.",
+                      ].join(" "),
+                      tools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
+                    },
+                  },
+                  mcpServers: buildMcpServers(this.config),
+                  settingSources: ["project"],
+                  maxTurns: options.maxTurns ?? 12,
+                  resume: options.resume === false ? undefined : this.lastSessionId,
+                }),
+          },
+        });
+        this.activeAbortController = abortController;
+        this.activeQuery = stream;
+        const timeoutHandle = setTimeout(() => {
+          try {
+            abortController.abort();
+            stream.close();
+          } catch {
+            // Best-effort timeout cleanup.
+          }
+        }, timeoutMs);
+
+        let result: AgentRunResult;
+        try {
+          result = await collectResult(stream, (sessionId) => {
+            if (options.resume !== false) {
+              this.lastSessionId = sessionId;
+            }
+          });
+        } finally {
+          clearTimeout(timeoutHandle);
+        }
+
+        if (isNonTextResult(result.text) && attempt < retries) {
+          continue;
+        }
+
+        return result;
+      } catch (error) {
+        if (this.activeAbortController?.signal.aborted) {
+          return {
+            text: "Agent run interrupted by operator",
+            aborted: true,
+          };
+        }
+
+        if (attempt < retries) {
+          continue;
+        }
+
+        return {
+          text: buildFallbackResponse(
+            prompt,
+            error instanceof Error ? error.message : "Unknown Agent SDK failure",
+          ),
+        };
+      } finally {
+        this.activeAbortController = undefined;
+        this.activeQuery = undefined;
+      }
+    }
+
+    return {
+      text: buildFallbackResponse(prompt, "Exhausted Agent SDK retries"),
+    };
+  }
+
+  abortActiveRun(): boolean {
+    if (!this.activeAbortController) {
+      return false;
+    }
 
     try {
-      const stream = query({
-        prompt,
-        options: {
-          cwd: this.config.workspaceDir,
-          additionalDirectories: [process.cwd()],
-          executable: "bun",
-          model: normalizeModel(this.config.anthropicModel),
-          tools: {
-            type: "preset",
-            preset: "claude_code",
-          },
-          allowedTools: [
-            "Read",
-            "Write",
-            "Edit",
-            "Bash",
-            "Glob",
-            "Grep",
-            "WebSearch",
-            "WebFetch",
-            "Task",
-          ],
-          permissionMode: "bypassPermissions",
-          allowDangerouslySkipPermissions: true,
-          systemPrompt: {
-            type: "preset",
-            preset: "claude_code",
-            append: buildSystemPrompt(),
-          },
-          agents: {
-            researcher: {
-              description: "Focused web and competitive intelligence subagent.",
-              prompt: [
-                "Use web research tools to gather current market context, competitors, positioning, and regulatory context.",
-                "Return concise summaries with practical next actions.",
-              ].join(" "),
-              tools: ["WebSearch", "WebFetch", "Read", "Write"],
-            },
-            builder: {
-              description: "Focused code and shipping subagent.",
-              prompt: [
-                "Use filesystem and shell tools to build artifacts, code, docs, and deployable assets inside the Shark workspace.",
-                "Prefer concrete outputs over abstract plans.",
-              ].join(" "),
-              tools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
-            },
-          },
-          mcpServers: buildMcpServers(this.config),
-          env: {
-            ...process.env,
-            ANTHROPIC_API_KEY: this.config.anthropicApiKey,
-            ANTHROPIC_MODEL: this.config.anthropicModel,
-            CLAUDE_AGENT_SDK_CLIENT_APP: "shark/0.1.0",
-          },
-          settingSources: ["project"],
-          maxTurns: options.maxTurns ?? 12,
-          resume: options.resume === false ? undefined : this.lastSessionId,
-        },
-      });
-
-      return await collectResult(stream, (sessionId) => {
-        if (options.resume !== false) {
-          this.lastSessionId = sessionId;
-        }
-      });
-    } catch (error) {
-      return {
-        text: buildFallbackResponse(
-          prompt,
-          error instanceof Error ? error.message : "Unknown Agent SDK failure",
-        ),
-      };
+      this.activeAbortController.abort();
+      this.activeQuery?.close();
+    } catch {
+      // Swallow cancellation cleanup failures; the caller only needs a best-effort interrupt.
     }
+
+    return true;
   }
 }
 
@@ -240,15 +314,38 @@ function buildMcpServers(config: SharkConfig): Record<string, McpServerConfig> {
 }
 
 function buildFallbackResponse(prompt: string, reason?: string): string {
-  const suffix = reason ? `\n\nFallback reason: ${reason}` : "";
-  return [
-    "Startup: AI revenue operations control tower for SMBs",
-    "Customer: founder-led SMBs with 5-100 employees",
-    "Problem: revenue, hiring, and cash workflows are fragmented across too many tools",
-    "Product: one AI-native command center that automates lead routing, collections, onboarding, and back-office follow-up",
-    "Why now: agents can now execute across email, browser, and internal tools continuously",
-    "Moat: proprietary workflow memory and execution history compound into better operating playbooks",
-    `Prompt context: ${prompt.slice(0, 160)}`,
-    suffix,
-  ].join("\n");
+  const fallbackReason = reason ?? "Agent runtime unavailable";
+
+  if (prompt.includes("Return only the Slack reply text.")) {
+    return "🦈 I hit a brief agent-runtime hiccup, but I captured that instruction and I’m keeping it in the loop.";
+  }
+
+  if (prompt.includes("Return only the final Slack message text.")) {
+    const update = extractLineValue(prompt, "Internal update:");
+    if (update) {
+      return `🦈 Quick update: ${update}`;
+    }
+    return "🦈 Quick update: I hit a brief agent-runtime hiccup while formatting this message, but the run is still active.";
+  }
+
+  if (fallbackReason.includes("SIGKILL")) {
+    return "The agent runtime was interrupted during this step. Continue from the existing plan and artifacts.";
+  }
+
+  return "The agent runtime could not finish this step cleanly. Continue from the existing plan and artifacts.";
+}
+
+function isNonTextResult(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized === "" || normalized === "Agent SDK completed without a textual summary.";
+}
+
+function extractLineValue(prompt: string, label: string): string | undefined {
+  for (const line of prompt.split("\n")) {
+    if (line.startsWith(label)) {
+      return line.slice(label.length).trim();
+    }
+  }
+
+  return undefined;
 }

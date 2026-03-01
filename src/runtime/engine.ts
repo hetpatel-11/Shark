@@ -158,36 +158,72 @@ export class SharkEngine {
   }
 
   async handleSlackInstruction(text: string): Promise<string> {
-    const normalized = text.trim().toLowerCase();
+    const cleanedText = normalizeOperatorSlackText(text);
+    const normalized = cleanedText.toLowerCase();
 
-    if (normalized === "pause") {
-      this.stop();
-      this.state = withEvent(this.state, this.event("status_update", "Loop paused by operator", {
-        source: "slack",
-      }));
-      await this.save();
-      return this.composeSlackAcknowledgement(text);
+    if (isExplicitSlackQuestion(normalized)) {
+      return this.composeSlackQuestionReply(cleanedText);
     }
 
-    if (normalized === "resume") {
+    const pauseControl = extractSlackControlDirective(cleanedText, "pause");
+    if (pauseControl) {
+      this.stop();
+      const interrupted = this.interruptActiveAgentWork();
+      this.state = withEvent(this.state, this.event("status_update", "Loop paused by operator", {
+        source: "slack",
+        interrupted,
+      }));
+      if (pauseControl.followUp) {
+        await this.enqueueOperatorCommand(pauseControl.followUp, "slack");
+      }
+      await this.save();
+      return "🦈 Paused. I stopped the loop and I’m holding position.";
+    }
+
+    const resumeControl =
+      extractSlackControlDirective(cleanedText, "resume") ??
+      extractSlackControlDirective(cleanedText, "continue");
+    if (resumeControl) {
       if (!this.state.isRunning) {
         this.start();
       }
       this.state = withEvent(this.state, this.event("status_update", "Loop resumed by operator", {
         source: "slack",
       }));
+      if (resumeControl.followUp) {
+        await this.enqueueOperatorCommand(resumeControl.followUp, "slack");
+      }
       await this.save();
       void this.runOnce("interrupt");
-      return this.composeSlackAcknowledgement(text);
+      return "🦈 Resumed. I’m back in the run now and I’m using your latest direction.";
     }
 
-    await this.enqueueOperatorCommand(text, "slack");
+    await this.enqueueOperatorCommand(cleanedText, "slack");
 
     if (this.state.isRunning) {
+      const interrupted = this.interruptActiveAgentWork();
+      if (interrupted) {
+        this.state = withEvent(
+          this.state,
+          this.event("status_update", "Interrupted in-flight agent work to apply the latest operator instruction", {
+            source: "slack",
+          }),
+        );
+        await this.save();
+      }
       void this.runOnce("interrupt");
+      return this.composeSlackHandledReply(
+        cleanedText,
+        interrupted
+          ? "I interrupted the in-flight agent step and folded this instruction into the live run."
+          : "I folded this instruction into the live run and I am applying it now.",
+      );
     }
 
-    return this.composeSlackAcknowledgement(text);
+    return this.composeSlackHandledReply(
+      cleanedText,
+      "I queued this instruction and I will apply it as soon as the run resumes.",
+    );
   }
 
   async ingestInboundEmail(payload: AgentMailWebhookPayload): Promise<void> {
@@ -336,35 +372,24 @@ export class SharkEngine {
 
   private async runDiscovery(): Promise<void> {
     await this.refreshProviderHealth();
-
-    const researchTask = "Research venture-scale AI startup opportunities that can be built and operated autonomously. Focus on markets with painful recurring workflows and clear distribution.";
-    const browserTask = await this.browserUse.runTask(researchTask);
+    const directives = this.recentOperatorDirectives();
     const memoryContext = await this.recallMemoryContext(
-      "previous startup ideas, venture thesis decisions, customer pain points, and operator preferences",
+      [
+        "previous startup ideas, venture thesis decisions, customer pain points, and operator preferences",
+        ...directives,
+      ].join(" | "),
     );
+    const researchMemo = await this.runDiscoveryResearch(memoryContext, directives);
+    const thesis = await this.runDiscoverySynthesis(memoryContext, researchMemo, directives);
 
-    const prompt = [
-      "You are Shark, a founder agent selecting one venture-scale AI startup to pursue.",
-      "Pick one startup idea after considering market pain, execution feasibility, AI leverage, and defensibility.",
-      "You have access to a tool surface and should pick an idea that can actually be executed with the available tools.",
-      "Search and reuse relevant memory before repeating past work. If prior memory is included below, use it.",
-      "Reply in labeled lines: Startup, Customer, Problem, Product, Why now, Moat.",
-      "",
-      "Relevant memory:",
-      memoryContext,
-      "",
-      "Available tools:",
-      this.renderToolCatalog(),
-      (browserTask.liveUrl ?? browserTask.live_url)
-        ? `Browser live URL: ${browserTask.liveUrl ?? browserTask.live_url}`
-        : (browserTask.task_id ?? browserTask.id)
-          ? `Browser task created: ${browserTask.task_id ?? browserTask.id}`
-          : "Browser run started or skipped.",
-    ].join("\n");
-
-    const result = await this.anthropic.runAgentPrompt(prompt);
-    this.markAgentTurns(result.turns);
-    const thesis = parseThesis(result.text);
+    if (!thesis) {
+      this.state.lastSummary = "Discovery did not produce a valid researched thesis yet. Shark will retry without selecting a fallback idea.";
+      this.state = withEvent(this.state, this.event("status_update", this.state.lastSummary));
+      if (this.shouldSendDiscoveryHeartbeat()) {
+        await this.notify("I am still researching and I have not locked a venture thesis yet. I am retrying with a narrower pass instead of guessing.");
+      }
+      return;
+    }
 
     this.state.thesis = thesis;
     this.state.lastSummary = `Selected startup thesis: ${thesis.headline}`;
@@ -383,9 +408,116 @@ export class SharkEngine {
       ),
     );
 
-    await this.writeArtifact("venture-thesis.md", renderThesis(thesis, result.text));
+    await this.writeArtifact("venture-thesis.md", renderThesis(thesis, researchMemo));
     await this.notify(`Shark selected a startup thesis: ${thesis.headline}`);
     this.state = transitionMode(this.state, "planning");
+  }
+
+  private async runDiscoveryResearch(memoryContext: string, directives: string[]): Promise<string> {
+    const result = await this.anthropic.runAgentPrompt(
+      [
+        "Discovery research step only.",
+        "Do not choose the final startup thesis yet.",
+        "You must perform current market research before proposing anything.",
+        "Use Browser Use MCP first for live market research if it is available to you.",
+        "If Browser Use MCP is unavailable or errors, explicitly say so and then use WebSearch or WebFetch.",
+        "Research only markets that can be built with the tools currently connected to you.",
+        "Evaluate pain severity, launch speed, AI leverage, defensibility, and likely distribution paths.",
+        "Eliminate weak ideas instead of keeping a broad brainstorm alive.",
+        "Return labeled lines only:",
+        "Research Source: <Browser Use | WebSearch | WebFetch | Mixed | Unavailable>",
+        "Top Market: <best market you found>",
+        "Customer: <best customer segment>",
+        "Pain: <core painful problem>",
+        "Evidence: <2-4 short facts from research>",
+        "Constraints: <what could make execution hard right now>",
+        "Recommendation: <one concrete recommendation for the best direction>",
+        "",
+        directives.length > 0
+          ? `Operator directives (treat as high-priority constraints):\n${directives.map((directive) => `- ${directive}`).join("\n")}`
+          : "No active operator directives.",
+        "",
+        "Relevant memory:",
+        memoryContext,
+        "",
+        "Available tools:",
+        this.renderToolCatalog(),
+        "",
+        "Use tool calls first, then return the labeled lines only.",
+      ].join("\n"),
+      {
+        maxTurns: 6,
+        resume: false,
+      },
+    );
+    this.markAgentTurns(result.turns);
+    if (result.aborted) {
+      return "";
+    }
+
+    const researchMemo = result.text.trim();
+    await this.writeArtifact("discovery-research.md", researchMemo || "No discovery research memo returned.");
+    return researchMemo;
+  }
+
+  private async runDiscoverySynthesis(
+    memoryContext: string,
+    researchMemo: string,
+    directives: string[],
+  ): Promise<VentureThesis | undefined> {
+    if (!researchMemo) {
+      return undefined;
+    }
+
+    const result = await this.anthropic.runAgentPrompt(
+      [
+        "Discovery synthesis step only.",
+        "Choose exactly one startup thesis from the research memo below.",
+        "Do not do more browsing or tool calls in this step.",
+        "If the research memo is weak or inconclusive, reply exactly with: NO_VALID_THESIS",
+        "Otherwise, reply in labeled lines only:",
+        "Startup: <headline>",
+        "Customer: <target customer>",
+        "Problem: <core problem>",
+        "Product: <product shape>",
+        "Why now: <why timing is right>",
+        "Moat: <defensibility hypothesis>",
+        "Market Size: <0-10>",
+        "Speed To Launch: <0-10>",
+        "Defensibility: <0-10>",
+        "AI Leverage: <0-10>",
+        "Distribution Potential: <0-10>",
+        "Composite: <0-10>",
+        "",
+        directives.length > 0
+          ? `Operator directives (these must shape the chosen idea unless unsafe or impossible):\n${directives
+              .map((directive) => `- ${directive}`)
+              .join("\n")}`
+          : "No active operator directives.",
+        "",
+        "Relevant memory:",
+        memoryContext,
+        "",
+        "Research memo:",
+        researchMemo,
+      ].join("\n"),
+      {
+        lightweight: true,
+        maxTurns: 1,
+        resume: false,
+      },
+    );
+    this.markAgentTurns(result.turns);
+    if (result.aborted) {
+      return undefined;
+    }
+
+    const text = result.text.trim();
+    if (text === "NO_VALID_THESIS") {
+      return undefined;
+    }
+
+    return parseThesis(text);
   }
 
   private async runPlanning(): Promise<void> {
@@ -432,6 +564,8 @@ export class SharkEngine {
         "- Keep tasks concrete and execution-ready.",
         "- Include tasks for research, product build-out, legal docs, launch assets, and operational setup when relevant.",
         "- No money-making, billing, or paid commitments.",
+        "- The old Shark operator dashboard/UI is deprecated. Do not include dashboard, runtime-config, sandbox-status, or UI-ops tasks.",
+        "- If deployment is needed, plan for the actual venture product deployment only.",
         "",
         "Available tools:",
         this.renderToolCatalog(),
@@ -440,16 +574,29 @@ export class SharkEngine {
           ? `Recent operator directives:\n${directives.map((directive) => `- ${directive}`).join("\n")}`
           : "No recent operator directives.",
         "",
-        "Create the file if it does not exist, or fully rewrite it if it is stale.",
-        "After updating the file, return a short summary of the planning changes.",
+        "The host runtime will write the file from your response.",
+        "Return only task lines and blank lines. No headings, no prose, no code fences.",
       ].join("\n"),
     );
     this.markAgentTurns(result.turns);
+    if (result.aborted) {
+      this.state.lastSummary = "Planning was interrupted by a new operator instruction. Restarting planning with the updated directive.";
+      this.state = withEvent(this.state, this.event("status_update", this.state.lastSummary));
+      return;
+    }
 
-    let entries = await this.readPlanEntries();
+    let entries = await this.materializePlanFromAgentText(result.text);
     if (entries.length === 0) {
-      await this.writeFallbackPlan(thesis);
-      entries = await this.readPlanEntries();
+      const recovered = await this.forcePlanMaterialization(thesis, directives, memoryContext, result.text);
+      if (recovered) {
+        entries = await this.readPlanEntries();
+      }
+    }
+
+    if (entries.length === 0) {
+      this.state.lastSummary = "Planning did not produce a valid runtime plan yet. Shark will retry planning instead of injecting a hardcoded plan.";
+      this.state = withEvent(this.state, this.event("status_update", this.state.lastSummary));
+      return;
     }
 
     this.syncTasksFromPlan(entries);
@@ -466,8 +613,10 @@ export class SharkEngine {
       tool: "anthropic",
     }));
 
-    this.state.lastSummary = `Planned ${this.state.tasks.filter((task) => task.status === "pending").length} pending tasks from runtime plan`;
-    this.state = withEvent(this.state, this.event("status_update", this.state.lastSummary));
+    const planningSummary = `Planned ${this.state.tasks.filter((task) => task.status === "pending").length} pending tasks from runtime plan`;
+    this.state.lastSummary = planningSummary;
+    this.state = withEvent(this.state, this.event("status_update", planningSummary));
+    await this.notify(planningSummary);
     this.state = transitionMode(this.state, "building");
   }
 
@@ -561,6 +710,14 @@ export class SharkEngine {
       ].join("\n"),
     );
     this.markAgentTurns(result.turns);
+    if (result.aborted) {
+      return {
+        taskId: entries[0]?.task.id,
+        action: entries[0]?.task.description ?? "Execute the next task",
+        reason: "Task selection was interrupted by a newer operator directive, so the runtime is falling back to the top pending task.",
+        raw: "Interrupted by operator",
+      };
+    }
 
     const fields = parseLabeledLines(result.text);
     return {
@@ -755,6 +912,27 @@ export class SharkEngine {
   }
 
   private async applyOperatorDirectiveToPlan(text: string): Promise<void> {
+    let entries = await this.readPlanEntries();
+    if (entries.length === 0 && this.state.thesis) {
+      const memoryContext = await this.recallMemoryContext(
+        [
+          this.state.thesis.headline,
+          this.state.thesis.targetCustomer,
+          this.state.thesis.problem,
+          text,
+        ].join(" | "),
+      );
+      const recovered = await this.forcePlanMaterialization(
+        this.state.thesis,
+        [text, ...this.recentOperatorDirectives()],
+        memoryContext,
+        "Operator directive arrived before a valid runtime plan existed.",
+      );
+      if (recovered) {
+        entries = await this.readPlanEntries();
+      }
+    }
+
     const result = await this.anthropic.runAgentPrompt(
       [
         "Planning mode only. Update ./IMPLEMENTATION_PLAN.md.",
@@ -763,15 +941,18 @@ export class SharkEngine {
         "Keep the exact task line format:",
         "- [ ] task-id | tool | title | description",
         "- [x] task-id | tool | title | description",
+        "Do not add deprecated Shark dashboard/UI tasks, runtime-config tasks, or sandbox-status tasks.",
+        "If the operator mentions deployment, make it the venture product deployment.",
         "",
         `Operator directive: ${text}`,
         "",
-        "After updating the file, return a short summary of the plan changes.",
+        "The host runtime will write the file from your response.",
+        "Return only task lines and blank lines. No headings, no prose, no code fences.",
       ].join("\n"),
     );
     this.markAgentTurns(result.turns);
 
-    const entries = await this.readPlanEntries();
+    entries = await this.materializePlanFromAgentText(result.text);
     if (entries.length > 0) {
       this.syncTasksFromPlan(entries);
     }
@@ -787,23 +968,93 @@ export class SharkEngine {
     );
   }
 
-  private async writeFallbackPlan(thesis: VentureThesis): Promise<void> {
-    const lines = [
-      `# Runtime Plan for ${thesis.headline}`,
-      "",
-      "These tasks are the canonical shared state for Shark build iterations.",
-      "",
-      ...createPlanTasks(thesis).map((task) => {
-        const tool = fallbackToolForTask(task.id);
-        return `- [ ] ${task.id} | ${tool} | ${task.title} | ${task.description}`;
-      }),
-      "",
-    ];
-    await writeFile(this.runtimePlanPath(), lines.join("\n"));
-  }
-
   private runtimePlanPath(): string {
     return join(this.config.workspaceDir, RUNTIME_PLAN_FILE);
+  }
+
+  private async materializePlanFromAgentText(text: string): Promise<PlanTaskEntry[]> {
+    const planText = extractPlanText(text);
+    if (!planText) {
+      return [];
+    }
+
+    await mkdir(this.config.workspaceDir, { recursive: true });
+    await writeFile(this.runtimePlanPath(), planText);
+    return this.readPlanEntries();
+  }
+
+  private async forcePlanMaterialization(
+    thesis: VentureThesis,
+    directives: string[],
+    memoryContext: string,
+    priorAttemptSummary: string,
+  ): Promise<boolean> {
+    const result = await this.anthropic.runAgentPrompt(
+      [
+        "Recovery planning mode only.",
+        `Return the full contents for ./${RUNTIME_PLAN_FILE} right now.`,
+        "Your only goal is to leave a parseable runtime plan for the host runtime to write.",
+        "Do not implement product code.",
+        "Do not browse the web.",
+        "The file must contain only task lines or blank lines.",
+        "Every task line must exactly match this format:",
+        "- [ ] task-id | tool | title | description",
+        "Allowed tool values: sdk, browser-use, supermemory, agentmail, vercel, slack, daytona, human.",
+        "Highest-priority tasks must appear first.",
+        "The plan must reflect the latest operator directives.",
+        "The plan must be concrete and executable.",
+        "Do not include deprecated Shark dashboard/UI tasks, runtime-config tasks, or sandbox-status tasks.",
+        "If deployment is requested, plan for the venture product deployment only.",
+        "",
+        `Startup thesis: ${thesis.headline}`,
+        `Customer: ${thesis.targetCustomer}`,
+        `Problem: ${thesis.problem}`,
+        `Product: ${thesis.productShape}`,
+        "",
+        "Relevant memory:",
+        memoryContext,
+        "",
+        directives.length > 0
+          ? `Operator directives (highest priority):\n${directives.map((directive) => `- ${directive}`).join("\n")}`
+          : "No active operator directives.",
+        "",
+        "Previous planning attempt summary:",
+        priorAttemptSummary || "No summary returned.",
+        "",
+        "Return only task lines and blank lines. No headings, no prose, no code fences.",
+      ].join("\n"),
+      {
+        maxTurns: 4,
+        resume: false,
+      },
+    );
+    this.markAgentTurns(result.turns);
+    if (result.aborted) {
+      return false;
+    }
+
+    const entries = await this.materializePlanFromAgentText(result.text);
+    if (entries.length === 0) {
+      return false;
+    }
+
+    await this.writeArtifact(
+      "planning-recovery.md",
+      [
+        `Session ID: ${result.sessionId ?? "unknown"}`,
+        `Turns: ${result.turns ?? "unknown"}`,
+        "",
+        result.text,
+      ].join("\n"),
+    );
+    this.state = withEvent(
+      this.state,
+      this.event("tool_called", "Claude recovered a missing runtime implementation plan", {
+        tool: "anthropic",
+      }),
+    );
+    this.syncTasksFromPlan(entries);
+    return true;
   }
 
   private recentOperatorDirectives(): string[] {
@@ -1051,7 +1302,7 @@ export class SharkEngine {
         } else {
           this.state = withEvent(
             this.state,
-            this.event("status_update", `Saved operator directive for the next planning cycle: ${command.text}`),
+            this.event("status_update", `Saved operator directive for the next discovery cycle: ${command.text}`),
           );
         }
       }
@@ -1142,32 +1393,47 @@ export class SharkEngine {
   }
 
   private formatSlackUpdateText(message: string): string {
+    const seed = stringHash(`${this.state.runId}:${this.state.totalAgentTurns}:${message}`);
     const headline = this.state.thesis?.headline ?? "No thesis selected yet";
     const pendingCount = this.state.tasks.filter((task) => task.status === "pending").length;
     const currentTask = this.state.currentTask?.title ?? "No active task";
-    const statusLabel = classifySlackStatus(message);
-    const tone = classifySlackTone(message);
     const elapsed = formatElapsed(this.state.startedAt);
     const turnLabel = `${this.state.totalAgentTurns} turn${this.state.totalAgentTurns === 1 ? "" : "s"}`;
-    const opener = buildSlackOpener(tone, statusLabel);
     const messageBody = formatSlackBody(message);
+    const opener = pickVariant(seed, [
+      "🦈 Quick update from Shark:",
+      "🦈 Here’s where I am right now:",
+      "🦈 Live progress report:",
+      "🦈 Current status:",
+    ]);
+    const forward = pickVariant(seed + 1, [
+      "Next I’m moving into",
+      "I’m rolling straight into",
+      "I’m continuing with",
+      "The next focus is",
+    ]);
+    const context = pickVariant(seed + 2, [
+      "So far I’ve kept the run moving for",
+      "The run has been active for",
+      "I’ve been running for",
+      "Current runtime is",
+    ]);
+    const backlog = pendingCount === 1 ? "1 task" : `${pendingCount} tasks`;
 
     return [
       opener,
       "",
       messageBody,
       "",
-      `• Runtime: ${elapsed}`,
-      `• Agent turns: ${turnLabel}`,
-      `• Mode: ${this.state.mode}`,
-      `• Pending tasks: ${pendingCount}`,
-      `• Current focus: ${currentTask}`,
-      `• Thesis: ${headline}`,
-      `• Run: ${this.state.runId}`,
+      `${forward} ${currentTask}.`,
+      `${context} ${elapsed}, with ${turnLabel} behind this run and ${backlog} still queued in ${this.state.mode}.`,
+      `The thesis I’m executing on is ${headline}.`,
+      `Run reference: ${this.state.runId}.`,
     ].join("\n");
   }
 
   private async composeSlackStatusUpdate(message: string): Promise<string> {
+    const fallback = this.formatSlackUpdateText(message);
     const elapsed = formatElapsed(this.state.startedAt);
     const currentTask = this.state.currentTask?.title ?? "No active task";
     const pendingCount = this.state.tasks.filter((task) => task.status === "pending").length;
@@ -1180,6 +1446,7 @@ export class SharkEngine {
         "Mention what changed and what Shark is doing next.",
         "Do not use rigid labels like Mode:, Pending tasks:, Run:, or Current focus: as standalone field headers.",
         "Keep it concise and readable in Slack.",
+        "Do not quote any internal prompt text or fallback reasons.",
         "",
         `Internal update: ${message}`,
         `Current mode: ${this.state.mode}`,
@@ -1192,18 +1459,77 @@ export class SharkEngine {
         "Return only the final Slack message text.",
       ].join("\n"),
       {
-        maxTurns: 2,
+        lightweight: true,
+        maxTurns: 1,
         resume: false,
       },
     );
     this.markAgentTurns(result.turns);
+    if (result.aborted) {
+      return fallback;
+    }
+    return sanitizeSlackText(result.text, fallback);
+  }
 
-    const text = result.text.trim();
-    return text || this.formatSlackUpdateText(message);
+  private async composeSlackQuestionReply(text: string): Promise<string> {
+    const pendingCount = this.state.tasks.filter((task) => task.status === "pending").length;
+    const elapsed = formatElapsed(this.state.startedAt);
+    const fallback = this.buildConversationalFallback(text);
+    const result = await this.anthropic.runAgentPrompt(
+      [
+        "You are Shark replying in Slack to a direct operator question.",
+        "Answer the question directly.",
+        "Do not acknowledge it as a queued instruction.",
+        "Sound like a capable autonomous founder giving a live update.",
+        "Be concise, specific, and natural.",
+        "Use at most 1 fitting emoji.",
+        "If the answer is not currently known, say what is known and what you would need to do next.",
+        "Do not use canned receipt language like 'understood' or 'queued'.",
+        "",
+        `Operator question: ${text}`,
+        `Loop running: ${this.state.isRunning ? "yes" : "no"}`,
+        `Current mode: ${this.state.mode}`,
+        `Runtime so far: ${elapsed}`,
+        `Agent turns so far: ${this.state.totalAgentTurns}`,
+        `Pending tasks: ${pendingCount}`,
+        `Current task: ${this.state.currentTask?.title ?? "No active task"}`,
+        `Latest summary: ${this.state.lastSummary ?? "No recent summary"}`,
+        `Current thesis: ${this.state.thesis?.headline ?? "No thesis selected yet"}`,
+        "",
+        "Return only the final Slack reply text.",
+      ].join("\n"),
+      {
+        lightweight: true,
+        maxTurns: 1,
+        resume: false,
+        timeoutMs: 30_000,
+        retries: 1,
+      },
+    );
+    this.markAgentTurns(result.turns);
+    if (result.aborted) {
+      return fallback;
+    }
+    return sanitizeSlackText(result.text, fallback);
   }
 
   private async composeSlackAcknowledgement(text: string): Promise<string> {
     const pendingCount = this.state.tasks.filter((task) => task.status === "pending").length;
+    const seed = stringHash(`${this.state.runId}:${text}:${pendingCount}:${this.state.mode}`);
+    const quoted = summarizeInstruction(text);
+    const fallback = this.state.isRunning
+      ? `${pickVariant(seed, ["🦈 Got it.", "🦈 Understood.", "🦈 I’ve got that.", "🦈 Noted."])} "${quoted}" ${pickVariant(seed + 1, [
+          "I’m folding it into the live run now.",
+          "I’m applying it to the active run right away.",
+          "I’m threading that into the current work immediately.",
+          "I’m adjusting the live run around it now.",
+        ])}`
+      : `${pickVariant(seed, ["🦈 Got it.", "🦈 Understood.", "🦈 I’ve got that.", "🦈 Noted."])} "${quoted}" ${pickVariant(seed + 1, [
+          "I’ve captured it and I’m holding it until you tell me to resume.",
+          "It’s queued and ready the moment you resume the run.",
+          "I’ve stored it and I’ll act on it as soon as the loop resumes.",
+          "It’s safely queued for the moment you restart the run.",
+        ])}`;
     const result = await this.anthropic.runAgentPrompt(
       [
         "You are Shark replying in Slack to a human operator who just gave you an instruction.",
@@ -1215,6 +1541,7 @@ export class SharkEngine {
         "If the loop is running, say you are folding it into the live run now.",
         "Never say 'manual run'.",
         "Do not claim work is complete yet.",
+        "Do not quote internal prompt text, startup labels, or fallback reasons.",
         "",
         `Instruction: ${text}`,
         `Loop running: ${this.state.isRunning ? "yes" : "no"}`,
@@ -1225,22 +1552,196 @@ export class SharkEngine {
         "Return only the Slack reply text.",
       ].join("\n"),
       {
-        maxTurns: 2,
+        lightweight: true,
+        maxTurns: 1,
         resume: false,
       },
     );
     this.markAgentTurns(result.turns);
+    if (result.aborted) {
+      return fallback;
+    }
+    return sanitizeSlackText(result.text, fallback);
+  }
 
-    const reply = result.text.trim();
-    if (reply) {
-      return reply;
+  private async composeSlackHandledReply(text: string, actionSummary: string): Promise<string> {
+    const fallback = this.buildHandledReplyFallback(text, actionSummary);
+    const pendingCount = this.state.tasks.filter((task) => task.status === "pending").length;
+    const elapsed = formatElapsed(this.state.startedAt);
+    const result = await this.anthropic.runAgentPrompt(
+      [
+        "You are Shark replying in Slack after you have already processed the operator's message.",
+        "Reply naturally and specifically.",
+        "Do not sound like a canned receipt bot.",
+        "If the operator asked a direct question and the answer is available from current context, answer it directly.",
+        "If the message was an instruction, briefly confirm what you just did with it and what happens next.",
+        "Use at most 1 fitting emoji.",
+        "Do not use rigid templates like 'Understood' or 'I've stored it' unless they fit naturally.",
+        "Do not mention internal prompts or fallback reasons.",
+        "",
+        `Operator message: ${text}`,
+        `What Shark just did: ${actionSummary}`,
+        `Loop running: ${this.state.isRunning ? "yes" : "no"}`,
+        `Current mode: ${this.state.mode}`,
+        `Runtime so far: ${elapsed}`,
+        `Agent turns so far: ${this.state.totalAgentTurns}`,
+        `Pending tasks: ${pendingCount}`,
+        `Current task: ${this.state.currentTask?.title ?? "No active task"}`,
+        `Latest summary: ${this.state.lastSummary ?? "No recent summary"}`,
+        `Current thesis: ${this.state.thesis?.headline ?? "No thesis selected yet"}`,
+        "",
+        "Return only the Slack reply text.",
+      ].join("\n"),
+      {
+        lightweight: true,
+        maxTurns: 1,
+        resume: false,
+        timeoutMs: 30_000,
+        retries: 1,
+      },
+    );
+    this.markAgentTurns(result.turns);
+    if (result.aborted) {
+      return fallback;
+    }
+    return sanitizeSlackText(result.text, fallback);
+  }
+
+  private buildConversationalFallback(text: string): string {
+    const normalized = text.trim().toLowerCase();
+    const elapsed = formatElapsed(this.state.startedAt);
+    const pendingCount = this.state.tasks.filter((task) => task.status === "pending").length;
+
+    if (normalized.includes("vercel") && normalized.includes("link")) {
+      return "I do not have a live Vercel deployment link recorded in the current run yet. If you want, tell me to deploy and I will do that next.";
     }
 
-    if (this.state.isRunning) {
-      return "🦈 I picked that up and I’m folding it into the live run now.";
+    if (normalized.includes("status") || normalized.includes("what is going on") || normalized.includes("what are you doing")) {
+      return `I am in ${this.state.mode} right now. The run has been going for ${elapsed}, with ${this.state.totalAgentTurns} turns so far and ${pendingCount} pending tasks. ${this.state.lastSummary ?? "I do not have a fresh milestone yet."}`;
     }
 
-    return "🦈 I’ve got it and I’m holding it until you tell me to resume.";
+    return `I do not have a precise answer to that yet. Right now I am in ${this.state.mode}, ${this.state.isRunning ? "the loop is running" : "the loop is paused"}, and my latest summary is: ${this.state.lastSummary ?? "no fresh milestone yet"}.`;
+  }
+
+  private buildHandledReplyFallback(text: string, actionSummary: string): string {
+    const normalized = text.trim().toLowerCase();
+    const elapsed = formatElapsed(this.state.startedAt);
+    const pendingCount = this.state.tasks.filter((task) => task.status === "pending").length;
+
+    if (normalized.includes("vercel") && normalized.includes("link")) {
+      return "I do not have a live Vercel deployment link recorded in this run yet. If you want, tell me to deploy next and I’ll do that.";
+    }
+
+    if (normalized.includes("status") || normalized.includes("what is going on") || normalized.includes("what are you doing")) {
+      return `I’m in ${this.state.mode} right now. The run has been going for ${elapsed}, with ${this.state.totalAgentTurns} turns so far and ${pendingCount} pending tasks. ${this.state.lastSummary ?? "I do not have a fresher milestone yet."}`;
+    }
+
+    if (actionSummary.includes("paused")) {
+      return "🦈 I paused the loop and I’m holding position until you tell me to resume.";
+    }
+
+    if (actionSummary.includes("resumed")) {
+      return "🦈 I resumed the loop and I’m jumping back into the run now.";
+    }
+
+    if (actionSummary.includes("interrupted")) {
+      return "🦈 I interrupted the in-flight run, queued your instruction, and I’m re-entering the loop with that new direction.";
+    }
+
+    return `I queued that for the run. Right now I’m in ${this.state.mode}, ${this.state.isRunning ? "the loop is running" : "the loop is paused"}, and my latest summary is: ${this.state.lastSummary ?? "no fresh milestone yet"}.`;
+  }
+
+  private buildSlackDirectiveFallback(text: string): string {
+    const pendingCount = this.state.tasks.filter((task) => task.status === "pending").length;
+    const seed = stringHash(`${this.state.runId}:${text}:${pendingCount}:${this.state.mode}`);
+    const quoted = summarizeInstruction(text);
+    return this.state.isRunning
+      ? `${pickVariant(seed, ["🦈 Got it.", "🦈 Understood.", "🦈 I’ve got that.", "🦈 Noted."])} "${quoted}" ${pickVariant(seed + 1, [
+          "I’m folding it into the live run now.",
+          "I’m applying it to the active run right away.",
+          "I’m threading that into the current work immediately.",
+          "I’m adjusting the live run around it now.",
+        ])}`
+      : `${pickVariant(seed, ["🦈 Got it.", "🦈 Understood.", "🦈 I’ve got that.", "🦈 Noted."])} "${quoted}" ${pickVariant(seed + 1, [
+          "I’ve captured it and I’m holding it until you tell me to resume.",
+          "It’s queued and ready the moment you resume the run.",
+          "I’ve stored it and I’ll act on it as soon as the loop resumes.",
+          "It’s safely queued for the moment you restart the run.",
+        ])}`;
+  }
+
+  private async classifySlackIntent(text: string): Promise<{
+    kind: "pause" | "resume" | "question" | "directive";
+    reply: string;
+  }> {
+    const elapsed = formatElapsed(this.state.startedAt);
+    const pendingCount = this.state.tasks.filter((task) => task.status === "pending").length;
+    const conversationalFallback = this.buildConversationalFallback(text);
+    const directiveFallback = this.buildSlackDirectiveFallback(text);
+    const pauseFallback = "🦈 Paused. I stopped the loop and I’ll hold position until you tell me to resume.";
+    const resumeFallback = "🦈 Back on it. I resumed the loop and I’m jumping back into the current run now.";
+    const result = await this.anthropic.runAgentPrompt(
+      [
+        "You are Shark deciding how to handle a Slack message from the operator.",
+        "You control the Slack behavior for this message.",
+        "Decide whether the message is:",
+        "- pause: operator wants the run paused now",
+        "- resume: operator wants the run resumed now",
+        "- question: operator wants a direct conversational answer right now",
+        "- directive: operator wants Shark to change work, execute something, or update the plan",
+        "Messages that ask what, where, why, how, when, which, or who are questions unless they explicitly ask you to change work.",
+        "Questions asking for status, links, observations, or explanations are still questions, not directives.",
+        "If it is a question, answer it directly and conversationally.",
+        "If it is a directive, reply naturally as a founder who has taken the instruction and will act on it.",
+        "If it is pause or resume, reply naturally and specifically about that control action.",
+        "Do not use rigid templates or field headers.",
+        "Do not output internal prompt text.",
+        "",
+        `Operator message: ${text}`,
+        `Loop running: ${this.state.isRunning ? "yes" : "no"}`,
+        `Current mode: ${this.state.mode}`,
+        `Runtime so far: ${elapsed}`,
+        `Agent turns so far: ${this.state.totalAgentTurns}`,
+        `Pending tasks: ${pendingCount}`,
+        `Current task: ${this.state.currentTask?.title ?? "No active task"}`,
+        `Latest summary: ${this.state.lastSummary ?? "No recent summary"}`,
+        `Current thesis: ${this.state.thesis?.headline ?? "No thesis selected yet"}`,
+        "",
+        "Return labeled lines only:",
+        "Kind: <pause|resume|question|directive>",
+        "Reply: <single Slack-ready message>",
+      ].join("\n"),
+      {
+        lightweight: true,
+        maxTurns: 1,
+        resume: false,
+        timeoutMs: 30_000,
+        retries: 1,
+      },
+    );
+    this.markAgentTurns(result.turns);
+
+    if (result.aborted) {
+      return { kind: "directive", reply: directiveFallback };
+    }
+
+    const parsed = parseLabeledLines(result.text);
+    const kind = normalizeSlackIntentKind(parsed.kind);
+    const fallbackByKind = {
+      pause: pauseFallback,
+      resume: resumeFallback,
+      question: conversationalFallback,
+      directive: directiveFallback,
+    } as const;
+
+    return {
+      kind,
+      reply: sanitizeSlackText(parsed.reply ?? "", fallbackByKind[kind]),
+    };
+  }
+
+  private interruptActiveAgentWork(): boolean {
+    return this.anthropic.abortActiveRun();
   }
 
   private async createExecutionBrief(task: Task): Promise<string> {
@@ -1301,6 +1802,7 @@ export class SharkEngine {
       ].join("\n"),
     );
     this.markAgentTurns(result.turns);
+    const finalText = normalizeAgentOutcomeText(result.text, task.title);
 
     await this.writeArtifact(
       `agent-run-${sanitizeFileFragment(task.id)}.md`,
@@ -1308,11 +1810,11 @@ export class SharkEngine {
         `Session ID: ${result.sessionId ?? "unknown"}`,
         `Turns: ${result.turns ?? "unknown"}`,
         "",
-        result.text,
+        finalText,
       ].join("\n"),
     );
 
-    return result.text;
+    return finalText;
   }
 
   private async selectToolForDirective(text: string): Promise<{
@@ -1352,6 +1854,17 @@ export class SharkEngine {
         `  Actions: ${tool.actions.join(", ")}`,
       ].join("\n"))
       .join("\n");
+  }
+
+  private shouldSendDiscoveryHeartbeat(): boolean {
+    const lastHeartbeat = this.state.recentEvents.find(
+      (event) => event.kind === "status_update" && event.message.includes("Slack notified: I am still researching"),
+    );
+    if (!lastHeartbeat) {
+      return true;
+    }
+
+    return Date.now() - Date.parse(lastHeartbeat.timestamp) > 5 * 60 * 1000;
   }
 
   private availableTools(): Array<{
@@ -1431,25 +1944,49 @@ export class SharkEngine {
   }
 }
 
-function parseThesis(raw: string): VentureThesis {
+function parseThesis(raw: string): VentureThesis | undefined {
   const fields = parseLabeledLines(raw);
+  const startup = fields.startup;
+  const customer = fields.customer;
+  const problem = fields.problem;
+  const product = fields.product;
+  const whyNow = fields["why now"];
+  const moat = fields.moat;
+
+  if (!startup || !customer || !problem || !product || !whyNow || !moat) {
+    return undefined;
+  }
+
   const now = new Date().toISOString();
+  const marketSize = parseScoreField(fields["market size"]);
+  const speedToLaunch = parseScoreField(fields["speed to launch"]);
+  const defensibility = parseScoreField(fields.defensibility);
+  const aiLeverage = parseScoreField(fields["ai leverage"]);
+  const distributionPotential = parseScoreField(fields["distribution potential"]);
+  const providedComposite = parseScoreField(fields.composite);
+  const composite = providedComposite ?? averageDefined([
+    marketSize,
+    speedToLaunch,
+    defensibility,
+    aiLeverage,
+    distributionPotential,
+  ]) ?? 0;
 
   return {
     id: `thesis_${Date.now().toString(36)}`,
-    headline: fields.startup ?? "AI revenue operations control tower for SMBs",
-    targetCustomer: fields.customer ?? "founder-led SMBs",
-    problem: fields.problem ?? "critical operating workflows are fragmented",
-    productShape: fields.product ?? "an AI-native operating system for repetitive company operations",
-    whyNow: fields["why now"] ?? "agents can now execute continuously across tools",
-    moatHypothesis: fields.moat ?? "compounding operational memory",
+    headline: startup,
+    targetCustomer: customer,
+    problem,
+    productShape: product,
+    whyNow,
+    moatHypothesis: moat,
     score: {
-      marketSize: 9,
-      speedToLaunch: 8,
-      defensibility: 7,
-      aiLeverage: 9,
-      distributionPotential: 7,
-      composite: 8,
+      marketSize: marketSize ?? 0,
+      speedToLaunch: speedToLaunch ?? 0,
+      defensibility: defensibility ?? 0,
+      aiLeverage: aiLeverage ?? 0,
+      distributionPotential: distributionPotential ?? 0,
+      composite,
     },
     selectedAt: now,
   };
@@ -1463,126 +2000,43 @@ function parseLabeledLines(raw: string): Record<string, string> {
       continue;
     }
 
-    fields[label.trim().toLowerCase()] = rest.join(":").trim();
+    const normalizedLabel = label
+      .replace(/^[\s>*_\-`#\d.)]+/, "")
+      .replace(/[*_`]+/g, "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+    if (!normalizedLabel) {
+      continue;
+    }
+
+    fields[normalizedLabel] = rest.join(":").trim();
   }
 
   return fields;
 }
 
-function createPlanTasks(thesis: VentureThesis): Task[] {
-  const now = new Date().toISOString();
-  return [
-    {
-      id: "create-thesis-dossier",
-      title: "Create startup dossier",
-      description: `Write a durable dossier for ${thesis.headline}`,
-      kind: "artifact",
-      mode: "building",
-      priority: 100,
-      blockedByApproval: false,
-      status: "pending",
-      updatedAt: now,
-    },
-    {
-      id: "create-agentmail-inbox",
-      title: "Provision agent inbox",
-      description: "Create the inbox Shark will use for outreach and auth",
-      kind: "operations",
-      mode: "building",
-      priority: 90,
-      blockedByApproval: false,
-      status: "pending",
-      updatedAt: now,
-    },
-    {
-      id: "build-startup-foundation",
-      title: "Build startup foundation",
-      description: "Use the Agent SDK to create the initial startup workspace and product foundation",
-      kind: "artifact",
-      mode: "building",
-      priority: 85,
-      blockedByApproval: false,
-      status: "pending",
-      updatedAt: now,
-    },
-    {
-      id: "sync-thesis-memory",
-      title: "Persist startup thesis in memory",
-      description: "Store the selected startup thesis in Supermemory",
-      kind: "memory",
-      mode: "building",
-      priority: 80,
-      blockedByApproval: false,
-      status: "pending",
-      updatedAt: now,
-    },
-    {
-      id: "browser-market-research",
-      title: "Run browser market research",
-      description: "Kick off a Browser Use research task for competitor discovery",
-      kind: "research",
-      mode: "building",
-      priority: 70,
-      blockedByApproval: false,
-      status: "pending",
-      updatedAt: now,
-    },
-    {
-      id: "publish-slack-brief",
-      title: "Send startup brief to Slack",
-      description: "Notify the operator of the chosen thesis and next actions",
-      kind: "messaging",
-      mode: "building",
-      priority: 60,
-      blockedByApproval: false,
-      status: "pending",
-      updatedAt: now,
-    },
-    {
-      id: "draft-legal-documents",
-      title: "Draft legal documents",
-      description: "Create initial terms and privacy policy drafts in the workspace",
-      kind: "artifact",
-      mode: "building",
-      priority: 58,
-      blockedByApproval: false,
-      status: "pending",
-      updatedAt: now,
-    },
-    {
-      id: "draft-launch-assets",
-      title: "Draft launch assets",
-      description: "Create initial launch copy for X, LinkedIn, and VC outreach",
-      kind: "artifact",
-      mode: "building",
-      priority: 54,
-      blockedByApproval: false,
-      status: "pending",
-      updatedAt: now,
-    },
-    {
-      id: "probe-vercel",
-      title: "Probe Vercel projects",
-      description: "Verify deployment access to Vercel",
-      kind: "deployment",
-      mode: "building",
-      priority: 50,
-      blockedByApproval: false,
-      status: "pending",
-      updatedAt: now,
-    },
-    {
-      id: "run-smoke-checks",
-      title: "Run runtime smoke checks",
-      description: "Typecheck the current control plane",
-      kind: "operations",
-      mode: "building",
-      priority: 40,
-      blockedByApproval: false,
-      status: "pending",
-      updatedAt: now,
-    },
-  ];
+function parseScoreField(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number.parseFloat(value.trim());
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
+function averageDefined(values: Array<number | undefined>): number | undefined {
+  const defined = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (defined.length === 0) {
+    return undefined;
+  }
+
+  const total = defined.reduce((sum, value) => sum + value, 0);
+  return Math.round((total / defined.length) * 10) / 10;
 }
 
 function classifySlackStatus(message: string): string {
@@ -1738,6 +2192,45 @@ function parsePlanLine(line: string): {
   };
 }
 
+function extractPlanText(raw: string): string {
+  const lines = raw.split(/\r?\n/);
+  const planLines: string[] = [];
+  let sawTaskLine = false;
+
+  for (const line of lines) {
+    const trimmed = line.trimEnd();
+    const compact = trimmed.trim();
+
+    if (!compact) {
+      if (sawTaskLine && planLines[planLines.length - 1] !== "") {
+        planLines.push("");
+      }
+      continue;
+    }
+
+    if (compact.startsWith("```")) {
+      continue;
+    }
+
+    if (!parsePlanLine(compact)) {
+      continue;
+    }
+
+    sawTaskLine = true;
+    planLines.push(compact);
+  }
+
+  while (planLines[planLines.length - 1] === "") {
+    planLines.pop();
+  }
+
+  if (planLines.length === 0) {
+    return "";
+  }
+
+  return `${planLines.join("\n")}\n`;
+}
+
 function taskKindForTool(tool: string): Task["kind"] {
   switch (tool) {
     case "browser-use":
@@ -1752,30 +2245,6 @@ function taskKindForTool(tool: string): Task["kind"] {
       return "artifact";
     default:
       return "operations";
-  }
-}
-
-function fallbackToolForTask(taskId: string): string {
-  switch (taskId) {
-    case "create-thesis-dossier":
-    case "build-startup-foundation":
-    case "draft-legal-documents":
-    case "draft-launch-assets":
-      return "sdk";
-    case "create-agentmail-inbox":
-      return "agentmail";
-    case "sync-thesis-memory":
-      return "sdk";
-    case "browser-market-research":
-      return "sdk";
-    case "publish-slack-brief":
-      return "slack";
-    case "probe-vercel":
-      return "vercel";
-    case "run-smoke-checks":
-      return "daytona";
-    default:
-      return "sdk";
   }
 }
 
@@ -1976,4 +2445,146 @@ function renderOperatorSummary(task: Task, rawOutput: string, failed: boolean, r
     `Result: ${conciseDetail}`,
     "I am moving straight to the next highest-leverage task.",
   ].join(" ");
+}
+
+function stringHash(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function pickVariant(seed: number, options: string[]): string {
+  if (options.length === 0) {
+    return "";
+  }
+
+  return options[Math.abs(seed) % options.length] ?? options[0] ?? "";
+}
+
+function summarizeInstruction(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "your instruction";
+  }
+
+  return normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized;
+}
+
+function sanitizeSlackText(text: string, fallback: string): string {
+  const normalized = text
+    .replace(/:shark:/gi, "🦈")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (
+    normalized.includes("Agent SDK completed without a textual summary.")
+    || normalized.includes("Agent run interrupted by operator")
+    || normalized.includes("Agent runtime unavailable")
+    || normalized.includes("Unknown Agent SDK failure")
+    || normalized.includes("brief agent-runtime hiccup")
+    || normalized.includes("captured that instruction and I’m keeping it in the loop")
+    || normalized.includes("captured that instruction and I'm keeping it in the loop")
+    || normalized.includes("agent runtime unavailable")
+    || normalized.includes("Prompt context:")
+    || normalized.includes("Fallback reason:")
+    || /\b(Startup|Customer|Problem|Product|Why now|Moat):/.test(normalized)
+  ) {
+    return fallback;
+  }
+
+  return normalized;
+}
+
+function normalizeOperatorSlackText(text: string): string {
+  return text
+    .replace(/^[\s•\-\*\u2022]+/, "")
+    .replace(/^\d+[\.\)]\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeAgentOutcomeText(text: string, taskTitle: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (
+    !normalized
+    || normalized === "Agent SDK completed without a textual summary."
+    || normalized.startsWith("The agent runtime was interrupted during this step.")
+    || normalized.startsWith("The agent runtime could not finish this step cleanly.")
+  ) {
+    return `Completed ${taskTitle}, but the agent did not return a written summary. Review the workspace artifacts for the concrete output.`;
+  }
+
+  return normalized;
+}
+
+function normalizeSlackIntentKind(value: string | undefined): "pause" | "resume" | "question" | "directive" {
+  const normalized = (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  if (normalized === "pause") {
+    return "pause";
+  }
+
+  if (normalized === "resume") {
+    return "resume";
+  }
+
+  if (normalized === "question") {
+    return "question";
+  }
+
+  return "directive";
+}
+
+function isExplicitSlackQuestion(normalized: string): boolean {
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized === "pause" || normalized === "resume") {
+    return false;
+  }
+
+  if (normalized.endsWith("?")) {
+    return true;
+  }
+
+  const starters = [
+    "what ",
+    "where ",
+    "why ",
+    "how ",
+    "when ",
+    "which ",
+    "who ",
+    "is ",
+    "are ",
+    "can you tell me",
+    "do you know",
+  ];
+
+  return starters.some((starter) => normalized.startsWith(starter));
+}
+
+function extractSlackControlDirective(
+  text: string,
+  command: "pause" | "resume" | "continue",
+): { followUp: string | null } | null {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const lower = normalized.toLowerCase();
+
+  if (lower === command) {
+    return { followUp: null };
+  }
+
+  if (!lower.startsWith(`${command} `)) {
+    return null;
+  }
+
+  const remainder = normalized.slice(command.length).trim();
+  const followUp = remainder.replace(/^(and|then)\s+/i, "").trim();
+  return { followUp: followUp || null };
 }

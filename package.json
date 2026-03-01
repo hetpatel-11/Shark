@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx src/main.ts",
     "build": "tsc -p tsconfig.json",
-    "deploy:convex": "npx convex deploy -y --typecheck disable",
+    "deploy:convex": "npx convex dev --once --typecheck disable --tail-logs disable",
     "deploy:daytona": "tsx src/deploy/daytona.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",

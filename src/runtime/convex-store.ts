@@ -1,3 +1,6 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+
 import { ConvexHttpClient } from "convex/browser";
 
 import type { RunState } from "../contracts.js";
@@ -12,7 +15,10 @@ export class ConvexStateStore implements StateStore {
   readonly kind = "convex";
   private readonly client: ConvexHttpClient;
 
-  constructor(private readonly deploymentUrl: string) {
+  constructor(
+    private readonly deploymentUrl: string,
+    private readonly backupPath: string,
+  ) {
     this.client = new ConvexHttpClient(deploymentUrl);
   }
 
@@ -30,19 +36,53 @@ export class ConvexStateStore implements StateStore {
         }
       }
     } catch {
-      return createInitialRunState(createRunId());
+      return this.loadBackup();
     }
 
-    return createInitialRunState(createRunId());
+    return this.loadBackup();
   }
 
   async save(state: RunState): Promise<void> {
-    await (this.client as any).mutation("state:upsert", {
-      payload: JSON.stringify(state),
-    });
+    await this.saveBackup(state);
+
+    try {
+      await (this.client as any).mutation("state:upsert", {
+        payload: JSON.stringify(state),
+      });
+    } catch (error) {
+      warn(
+        `Convex save failed; continuing with local backup only: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  private async loadBackup(): Promise<RunState> {
+    await mkdir(dirname(this.backupPath), { recursive: true });
+
+    try {
+      const raw = await readFile(this.backupPath, "utf8");
+      const parsed = JSON.parse(raw) as RunState;
+      return {
+        ...createInitialRunState(parsed.runId),
+        ...parsed,
+      };
+    } catch {
+      return createInitialRunState(createRunId());
+    }
+  }
+
+  private async saveBackup(state: RunState): Promise<void> {
+    await mkdir(dirname(this.backupPath), { recursive: true });
+    await writeFile(this.backupPath, JSON.stringify(state, null, 2));
   }
 }
 
 function createRunId(): string {
   return `run_${Date.now().toString(36)}`;
+}
+
+function warn(message: string): void {
+  process.stderr.write(`${message}\n`);
 }

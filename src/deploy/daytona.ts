@@ -61,7 +61,7 @@ await runRemoteCommand(sandbox, "bash -lc 'export PATH=$HOME/.bun/bin:$PATH && b
 process.stdout.write("Starting Shark control plane in Daytona with Bun...\n");
 await runRemoteCommand(
   sandbox,
-  "bash -lc 'export PATH=$HOME/.bun/bin:$PATH && nohup bun run start > shark.log 2>&1 < /dev/null & sleep 1'",
+  "bash -lc 'export PATH=$HOME/.bun/bin:$PATH && setsid sh -c \"bun run start > shark.log 2>&1 < /dev/null\" >/dev/null 2>&1 & sleep 2'",
   remoteRoot,
   60,
 );
