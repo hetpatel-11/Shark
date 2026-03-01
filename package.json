@@ -25,6 +25,7 @@
     "@chat-adapter/slack": "^4.15.0",
     "@chat-adapter/state-memory": "^4.15.0",
     "@daytonaio/sdk": "^0.148.0",
+    "@slack/socket-mode": "^2.0.5",
     "chat": "^4.15.0",
     "convex": "^1.32.0"
   }

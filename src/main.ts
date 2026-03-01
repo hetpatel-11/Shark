@@ -7,7 +7,6 @@ import { ConvexStateStore } from "./runtime/convex-store.js";
 import { SharkEngine } from "./runtime/engine.js";
 import { FileStateStore } from "./runtime/file-store.js";
 import type { StateStore } from "./runtime/store.js";
-import { renderDashboard } from "./server/dashboard.js";
 
 const config = loadConfig();
 const store: StateStore = config.convexUrl
@@ -16,12 +15,13 @@ const store: StateStore = config.convexUrl
 const engine = new SharkEngine(config, store);
 const slackBot = new SlackChatBot(
   config,
-  (text, source) => engine.enqueueOperatorCommand(text, source),
+  (text) => engine.handleSlackInstruction(text),
 );
 
 const args = new Set(process.argv.slice(2));
 
 await engine.init();
+await slackBot.start();
 
 if (args.has("--smoke")) {
   const snapshot = await engine.smoke();
@@ -33,7 +33,10 @@ const server = createServer(async (request, response) => {
   const url = request.url ?? "/";
   const method = request.method ?? "GET";
 
-  if (method === "OPTIONS" && (url.startsWith("/api/") || url.startsWith("/slack/"))) {
+  if (
+    method === "OPTIONS"
+    && (url.startsWith("/api/") || url.startsWith("/agentmail/"))
+  ) {
     return sendEmpty(response, 204);
   }
 
@@ -64,34 +67,21 @@ const server = createServer(async (request, response) => {
     return sendJson(response, 200, engine.snapshot());
   }
 
-  if (method === "POST" && url === "/api/command") {
+  if (method === "POST" && url === "/agentmail/webhooks") {
     const body = await readBody(request);
-    const payload = body.length > 0 ? (JSON.parse(body) as { text?: string }) : {};
-    if (!payload.text) {
-      return sendJson(response, 400, { error: "Missing text" });
+    let payload: unknown;
+    try {
+      payload = body.length > 0 ? JSON.parse(body) : {};
+    } catch {
+      return sendJson(response, 400, { error: "Invalid JSON" });
     }
 
-    await engine.enqueueOperatorCommand(payload.text, "ui");
-    return sendJson(response, 200, engine.snapshot());
-  }
-
-  if (method === "GET" && url === "/") {
-    response.writeHead(200, {
-      "Content-Type": "text/html; charset=utf-8",
+    void engine.ingestInboundEmail(payload as Parameters<SharkEngine["ingestInboundEmail"]>[0]).catch((error: unknown) => {
+      const message = error instanceof Error ? error.stack ?? error.message : String(error);
+      process.stderr.write(`AgentMail webhook processing failed: ${message}\n`);
     });
-    response.end(renderDashboard(engine.snapshot()));
-    return;
-  }
 
-  if (url === "/slack/events") {
-    const body = await readBody(request);
-    const slackRequest = new Request(`http://localhost:${config.port}${url}`, {
-      method,
-      headers: normalizeHeaders(request.headers),
-      body: method === "GET" ? undefined : body,
-    });
-    const slackResponse = await slackBot.handleWebhook(slackRequest);
-    return sendFetchResponse(response, slackResponse);
+    return sendJson(response, 200, { ok: true });
   }
 
   sendJson(response, 404, { error: "Not found" });
@@ -103,7 +93,8 @@ server.listen(config.port, () => {
     `State file: ${config.stateFile}`,
     `Workspace: ${config.workspaceDir}`,
     `Storage: ${store.kind}`,
-    `Slack bot webhook: ${slackBot.isEnabled() ? "/slack/events" : "disabled (missing signing secret)"}`,
+    `Slack control: ${slackBot.isEnabled() ? "Socket Mode enabled" : "disabled (missing SLACK_APP_TOKEN or SLACK_BOT_TOKEN)"}`,
+    "AgentMail webhook: /agentmail/webhooks",
     `Anthropic: ${maskSecret(config.anthropicApiKey)}`,
     `Supermemory: ${maskSecret(config.supermemoryApiKey)}`,
     `Browser Use: ${maskSecret(config.browserUseApiKey)}`,
@@ -121,12 +112,16 @@ server.listen(config.port, () => {
 
 process.on("SIGINT", () => {
   engine.stop();
-  server.close(() => process.exit(0));
+  void slackBot.stop().finally(() => {
+    server.close(() => process.exit(0));
+  });
 });
 
 process.on("SIGTERM", () => {
   engine.stop();
-  server.close(() => process.exit(0));
+  void slackBot.stop().finally(() => {
+    server.close(() => process.exit(0));
+  });
 });
 
 function sendJson(
@@ -149,23 +144,6 @@ function sendEmpty(
   response.end();
 }
 
-async function sendFetchResponse(
-  response: ServerResponse<IncomingMessage>,
-  fetchResponse: Response,
-): Promise<void> {
-  const text = await fetchResponse.text();
-  const headers: Record<string, string> = {};
-  fetchResponse.headers.forEach((value, key) => {
-    headers[key] = value;
-  });
-
-  response.writeHead(fetchResponse.status, {
-    ...headers,
-    ...corsHeaders(),
-  });
-  response.end(text);
-}
-
 async function readBody(request: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -177,18 +155,6 @@ async function readBody(request: IncomingMessage): Promise<string> {
     });
     request.on("error", reject);
   });
-}
-
-function normalizeHeaders(headers: IncomingMessage["headers"]): Record<string, string> {
-  const normalized: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    if (typeof value === "string") {
-      normalized[key] = value;
-    } else if (Array.isArray(value)) {
-      normalized[key] = value.join(", ");
-    }
-  }
-  return normalized;
 }
 
 function corsHeaders(): Record<string, string> {

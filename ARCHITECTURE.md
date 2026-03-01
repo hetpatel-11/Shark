@@ -12,7 +12,7 @@ The system is not a chatbot. It is a persistent agent runtime with durable memor
 - Primary model runtime: Anthropic via Claude Agent SDK
 - Public actions: autonomous, but always notify the operator in Slack
 - Spending money: blocked until the operator explicitly approves a requested action
-- Human steering: available at any time through Slack and the web UI
+- Human steering: available at any time through Slack
 - Startup strategy: perform market research first, then commit to a chosen AI startup and keep iterating on it
 
 ## Core system components
@@ -69,7 +69,6 @@ Responsibilities:
 - event logs and structured tool traces
 - Slack message mirror and interrupt queue
 - operator commands and acknowledgements
-- UI query surface for the Vercel dashboard
 
 ### 5. Browser execution
 
@@ -100,7 +99,7 @@ Responsibilities:
 
 ### 7. Operator surfaces
 
-Slack is the primary interrupt and notification interface. A web UI deployed to Vercel is the mirrored observability and control dashboard.
+Slack is the primary interrupt and notification interface.
 
 Slack responsibilities:
 
@@ -109,14 +108,6 @@ Slack responsibilities:
 - deployment notifications
 - warnings and escalations
 - operator interrupt commands
-
-Web UI responsibilities:
-
-- live run feed
-- task queue and current mode
-- tool activity timeline
-- memory and decision summaries
-- command entry equivalent to Slack
 
 ### 8. Deployment
 

@@ -101,7 +101,7 @@ export interface ApprovalRequest {
 
 export interface OperatorCommand {
   id: string;
-  source: "slack" | "ui";
+  source: "slack" | "email";
   text: string;
   createdAt: string;
 }

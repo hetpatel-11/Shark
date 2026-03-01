@@ -48,9 +48,45 @@ interface BuildSelection {
   raw: string;
 }
 
+interface AgentMailWebhookPayload {
+  event_type?: string;
+  event_id?: string;
+  message?: {
+    from_?: string[];
+    organization_id?: string;
+    inbox_id?: string;
+    thread_id?: string;
+    message_id?: string;
+    labels?: string[];
+    timestamp?: string;
+    reply_to?: string[];
+    to?: string[];
+    cc?: string[];
+    bcc?: string[];
+    subject?: string;
+    preview?: string;
+    text?: string;
+    html?: string;
+    attachments?: Array<{
+      attachment_id?: string;
+      filename?: string;
+      content_type?: string;
+      size?: number;
+      inline?: boolean;
+    }>;
+    in_reply_to?: string;
+    references?: string[];
+    sort_key?: string;
+    updated_at?: string;
+    created_at?: string;
+  };
+}
+
 export class SharkEngine {
   private state = createInitialRunState("boot");
   private timer?: NodeJS.Timeout;
+  private activeCycle?: Promise<DashboardSnapshot>;
+  private pendingCycleTrigger?: "manual" | "interval" | "startup" | "interrupt";
 
   private readonly anthropic: AnthropicAdapter;
   private readonly browserUse: BrowserUseAdapter;
@@ -121,7 +157,111 @@ export class SharkEngine {
     await this.save();
   }
 
-  async runOnce(trigger: "manual" | "interval" | "startup" = "manual"): Promise<DashboardSnapshot> {
+  async handleSlackInstruction(text: string): Promise<string> {
+    const normalized = text.trim().toLowerCase();
+
+    if (normalized === "pause") {
+      this.stop();
+      this.state = withEvent(this.state, this.event("status_update", "Loop paused by operator", {
+        source: "slack",
+      }));
+      await this.save();
+      return this.composeSlackAcknowledgement(text);
+    }
+
+    if (normalized === "resume") {
+      if (!this.state.isRunning) {
+        this.start();
+      }
+      this.state = withEvent(this.state, this.event("status_update", "Loop resumed by operator", {
+        source: "slack",
+      }));
+      await this.save();
+      void this.runOnce("interrupt");
+      return this.composeSlackAcknowledgement(text);
+    }
+
+    await this.enqueueOperatorCommand(text, "slack");
+
+    if (this.state.isRunning) {
+      void this.runOnce("interrupt");
+    }
+
+    return this.composeSlackAcknowledgement(text);
+  }
+
+  async ingestInboundEmail(payload: AgentMailWebhookPayload): Promise<void> {
+    if (payload.event_type !== "message.received" || !payload.message) {
+      this.state = withEvent(
+        this.state,
+        this.event("status_update", `Ignored unsupported AgentMail event: ${payload.event_type ?? "unknown"}`, {
+          surface: "agentmail",
+        }),
+      );
+      await this.save();
+      return;
+    }
+
+    const email = payload.message;
+    const subject = email.subject?.trim() || "No subject";
+    const sender = joinAddresses(email.from_);
+    const threadId = email.thread_id ?? "unknown-thread";
+    const messageId = email.message_id ?? `msg_${Date.now().toString(36)}`;
+
+    await this.writeArtifact(
+      `agentmail-inbound-${sanitizeFileFragment(messageId)}.md`,
+      renderInboundEmailArtifact(payload),
+    );
+
+    this.state = enqueueCommand(this.state, {
+      id: `cmd_${Date.now().toString(36)}`,
+      source: "email",
+      text: buildInboundEmailDirective(payload),
+      createdAt: new Date().toISOString(),
+    });
+    this.state = withEvent(
+      this.state,
+      this.event("operator_command", `Inbound email queued for review: ${subject}`, {
+        source: "email",
+        threadId,
+        inboxId: email.inbox_id ?? "unknown",
+      }),
+    );
+    this.state = withEvent(
+      this.state,
+      this.event("status_update", `Inbound email received from ${sender}: ${subject}`, {
+        surface: "agentmail",
+        eventType: payload.event_type,
+        threadId,
+        messageId,
+      }),
+    );
+    await this.save();
+  }
+
+  async runOnce(trigger: "manual" | "interval" | "startup" | "interrupt" = "manual"): Promise<DashboardSnapshot> {
+    if (this.activeCycle) {
+      if (!this.pendingCycleTrigger || trigger !== "interval") {
+        this.pendingCycleTrigger = trigger;
+      }
+      return this.activeCycle;
+    }
+
+    this.activeCycle = this.runCycle(trigger);
+
+    try {
+      return await this.activeCycle;
+    } finally {
+      this.activeCycle = undefined;
+      const nextTrigger = this.pendingCycleTrigger;
+      this.pendingCycleTrigger = undefined;
+      if (nextTrigger) {
+        void this.runOnce(nextTrigger);
+      }
+    }
+  }
+
+  private async runCycle(trigger: "manual" | "interval" | "startup" | "interrupt"): Promise<DashboardSnapshot> {
     await mkdir(this.config.workspaceDir, { recursive: true });
     const entries = await this.readPlanEntries();
     if (entries.length > 0) {
@@ -984,7 +1124,8 @@ export class SharkEngine {
   }
 
   private async notify(message: string): Promise<void> {
-    const result = await this.slack.postMessage(this.formatSlackUpdateText(message));
+    const slackMessage = await this.composeSlackStatusUpdate(message);
+    const result = await this.slack.postMessage(slackMessage);
     const eventMessage = result.ok ? `Slack notified: ${message}` : `Slack notification skipped: ${result.error ?? "not configured"}`;
     this.state = withEvent(this.state, this.event("status_update", eventMessage, {
       surface: "slack",
@@ -1024,6 +1165,82 @@ export class SharkEngine {
       `• Thesis: ${headline}`,
       `• Run: ${this.state.runId}`,
     ].join("\n");
+  }
+
+  private async composeSlackStatusUpdate(message: string): Promise<string> {
+    const elapsed = formatElapsed(this.state.startedAt);
+    const currentTask = this.state.currentTask?.title ?? "No active task";
+    const pendingCount = this.state.tasks.filter((task) => task.status === "pending").length;
+    const result = await this.anthropic.runAgentPrompt(
+      [
+        "Rewrite this internal Shark status update into a natural Slack message from the agent to its operator.",
+        "Sound like a capable founder giving a live update, not a dashboard.",
+        "Vary the wording and structure from message to message.",
+        "Use 1 or 2 fitting emojis.",
+        "Mention what changed and what Shark is doing next.",
+        "Do not use rigid labels like Mode:, Pending tasks:, Run:, or Current focus: as standalone field headers.",
+        "Keep it concise and readable in Slack.",
+        "",
+        `Internal update: ${message}`,
+        `Current mode: ${this.state.mode}`,
+        `Pending tasks: ${pendingCount}`,
+        `Current focus: ${currentTask}`,
+        `Runtime so far: ${elapsed}`,
+        `Agent turns so far: ${this.state.totalAgentTurns}`,
+        `Current thesis: ${this.state.thesis?.headline ?? "No thesis selected yet"}`,
+        "",
+        "Return only the final Slack message text.",
+      ].join("\n"),
+      {
+        maxTurns: 2,
+        resume: false,
+      },
+    );
+    this.markAgentTurns(result.turns);
+
+    const text = result.text.trim();
+    return text || this.formatSlackUpdateText(message);
+  }
+
+  private async composeSlackAcknowledgement(text: string): Promise<string> {
+    const pendingCount = this.state.tasks.filter((task) => task.status === "pending").length;
+    const result = await this.anthropic.runAgentPrompt(
+      [
+        "You are Shark replying in Slack to a human operator who just gave you an instruction.",
+        "Acknowledge the instruction naturally and sound like a competent autonomous founder.",
+        "Be warm, concise, and specific.",
+        "Vary the phrasing. Do not use a canned template.",
+        "Use 1 fitting emoji.",
+        "If the loop is paused, say you captured it and are ready to act the moment the run resumes.",
+        "If the loop is running, say you are folding it into the live run now.",
+        "Never say 'manual run'.",
+        "Do not claim work is complete yet.",
+        "",
+        `Instruction: ${text}`,
+        `Loop running: ${this.state.isRunning ? "yes" : "no"}`,
+        `Current mode: ${this.state.mode}`,
+        `Pending tasks: ${pendingCount}`,
+        `Latest summary: ${this.state.lastSummary ?? "No completed work yet."}`,
+        "",
+        "Return only the Slack reply text.",
+      ].join("\n"),
+      {
+        maxTurns: 2,
+        resume: false,
+      },
+    );
+    this.markAgentTurns(result.turns);
+
+    const reply = result.text.trim();
+    if (reply) {
+      return reply;
+    }
+
+    if (this.state.isRunning) {
+      return "🦈 I picked that up and I’m folding it into the live run now.";
+    }
+
+    return "🦈 I’ve got it and I’m holding it until you tell me to resume.";
   }
 
   private async createExecutionBrief(task: Task): Promise<string> {
@@ -1160,7 +1377,7 @@ export class SharkEngine {
         name: "agentmail",
         status: this.agentMail.isConfigured() ? "ready" : "unconfigured",
         purpose: "Provision and manage the agent inbox surface.",
-        actions: ["create mailbox"],
+        actions: ["create mailbox", "ingest inbound email webhook"],
       },
       {
         name: "vercel",
@@ -1603,6 +1820,94 @@ function sanitizeFileFragment(value: string): string {
     .replaceAll(/[^a-z0-9_-]+/g, "-")
     .replaceAll(/-+/g, "-")
     .replaceAll(/^-|-$/g, "");
+}
+
+function joinAddresses(value?: string[]): string {
+  if (!Array.isArray(value) || value.length === 0) {
+    return "Unknown";
+  }
+
+  return value.join(", ");
+}
+
+function renderInboundEmailArtifact(payload: AgentMailWebhookPayload): string {
+  const email = payload.message;
+  if (!email) {
+    return "# Inbound Email\n\nNo message payload received.";
+  }
+
+  const attachments = email.attachments ?? [];
+
+  return [
+    "# Inbound Email",
+    "",
+    `Event: ${payload.event_type ?? "unknown"}`,
+    `Event ID: ${payload.event_id ?? "unknown"}`,
+    `Thread ID: ${email.thread_id ?? "unknown"}`,
+    `Message ID: ${email.message_id ?? "unknown"}`,
+    `Inbox ID: ${email.inbox_id ?? "unknown"}`,
+    `From: ${joinAddresses(email.from_)}`,
+    `To: ${joinAddresses(email.to)}`,
+    `CC: ${joinAddresses(email.cc)}`,
+    `Reply-To: ${joinAddresses(email.reply_to)}`,
+    `Subject: ${email.subject ?? "No subject"}`,
+    `Preview: ${email.preview ?? "n/a"}`,
+    `Timestamp: ${email.timestamp ?? email.created_at ?? "unknown"}`,
+    `In-Reply-To: ${email.in_reply_to ?? "n/a"}`,
+    "",
+    "## Labels",
+    ...(email.labels?.length ? email.labels.map((label) => `- ${label}`) : ["- none"]),
+    "",
+    "## Attachments",
+    ...(attachments.length
+      ? attachments.map((attachment) => [
+        `- ${attachment.filename ?? attachment.attachment_id ?? "unnamed attachment"}`,
+        `  Type: ${attachment.content_type ?? "unknown"}`,
+        `  Size: ${attachment.size ?? 0}`,
+        `  Inline: ${attachment.inline ? "yes" : "no"}`,
+      ].join("\n"))
+      : ["- none"]),
+    "",
+    "## Text Body",
+    email.text?.trim() || email.preview?.trim() || "No text body provided.",
+    "",
+    "## HTML Body",
+    email.html?.trim() || "No HTML body provided.",
+  ].join("\n");
+}
+
+function buildInboundEmailDirective(payload: AgentMailWebhookPayload): string {
+  const email = payload.message;
+  if (!email) {
+    return "Review the inbound AgentMail event and decide if action is needed.";
+  }
+
+  const attachments = email.attachments ?? [];
+
+  return [
+    "A new inbound email arrived. Review it and decide the next highest-leverage follow-up.",
+    `From: ${joinAddresses(email.from_)}`,
+    `To: ${joinAddresses(email.to)}`,
+    `Subject: ${email.subject ?? "No subject"}`,
+    `Thread ID: ${email.thread_id ?? "unknown"}`,
+    `Message ID: ${email.message_id ?? "unknown"}`,
+    email.in_reply_to ? `In reply to: ${email.in_reply_to}` : "This may start a new thread.",
+    "",
+    "Email preview:",
+    email.preview?.trim() || "No preview provided.",
+    "",
+    "Email body:",
+    email.text?.trim() || "No text body provided.",
+    "",
+    "Attachments:",
+    ...(attachments.length
+      ? attachments.map((attachment) =>
+        `- ${attachment.filename ?? attachment.attachment_id ?? "unnamed attachment"} (${attachment.content_type ?? "unknown"})`,
+      )
+      : ["- none"]),
+    "",
+    "Use the current workspace, memory, and available tools to decide whether to reply, update the plan, or wait for operator direction.",
+  ].join("\n");
 }
 
 function renderThesis(thesis: VentureThesis, raw: string): string {

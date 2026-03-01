@@ -1,6 +1,6 @@
 # Shark
 
-Shark is a production-oriented autonomous founder and operator that runs continuously inside Daytona. It uses Claude Agent SDK as the control brain, chooses from a toolset at runtime, and keeps building and operating an AI-native startup with long-term memory, durable state, and human steering through Slack plus a web UI.
+Shark is a production-oriented autonomous founder and operator that runs continuously inside Daytona. It uses Claude Agent SDK as the control brain, chooses from a toolset at runtime, and keeps building and operating an AI-native startup with long-term memory, durable state, and human steering through Slack.
 
 ## Core principles
 
@@ -20,7 +20,6 @@ Shark is a production-oriented autonomous founder and operator that runs continu
 - Sandboxed execution: Daytona
 - Deployment: Vercel
 - Operator messaging: Slack
-- Operator UI: Vercel-hosted web app backed by Convex
 
 ## Repo layout
 
@@ -39,7 +38,7 @@ This repository now includes a runnable Shark control plane:
 - a persistent autonomous loop
 - real HTTP adapters for Anthropic, Supermemory, Browser Use, AgentMail, Slack, and Vercel
 - command execution inside the current runtime for Daytona-style sandbox work
-- a local control dashboard and JSON API
+- a Slack-first control surface and JSON API
 - artifact persistence under `.shark/workspace`
 
 ## Run it
@@ -58,19 +57,19 @@ This repository now includes a runnable Shark control plane:
 - install Bun inside Daytona
 - run `bun install` and `bun run build` inside Daytona
 - start the control plane remotely with `bun run start`
-- print a Daytona preview URL for the live dashboard
+- print a Daytona preview URL for the live runtime
 
 This is the intended production-style path. The long-running worker should live in Daytona, not on the operator’s machine.
 
 ## HTTP endpoints
 
-- `GET /`: operator dashboard
 - `GET /healthz`: health probe
 - `GET /api/state`: current run snapshot
 - `POST /api/run-once`: execute one loop iteration
 - `POST /api/start`: start continuous execution
 - `POST /api/stop`: stop continuous execution
-- `POST /api/command`: queue an operator interrupt with JSON `{ "text": "..." }`
+- `POST /slack/events`: Slack webhook for operator mentions and thread replies
+- `POST /agentmail/webhooks`: AgentMail webhook for inbound email events
 
 ## Implementation note
 

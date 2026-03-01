@@ -10,6 +10,11 @@ interface AgentRunResult {
   turns?: number;
 }
 
+interface AgentRunOptions {
+  maxTurns?: number;
+  resume?: boolean;
+}
+
 export class AnthropicAdapter {
   private lastSessionId?: string;
 
@@ -24,7 +29,7 @@ export class AnthropicAdapter {
     return result.text;
   }
 
-  async runAgentPrompt(prompt: string): Promise<AgentRunResult> {
+  async runAgentPrompt(prompt: string, options: AgentRunOptions = {}): Promise<AgentRunResult> {
     if (!this.config.anthropicApiKey) {
       return {
         text: buildFallbackResponse(prompt),
@@ -89,13 +94,15 @@ export class AnthropicAdapter {
             CLAUDE_AGENT_SDK_CLIENT_APP: "shark/0.1.0",
           },
           settingSources: ["project"],
-          maxTurns: 12,
-          resume: this.lastSessionId,
+          maxTurns: options.maxTurns ?? 12,
+          resume: options.resume === false ? undefined : this.lastSessionId,
         },
       });
 
       return await collectResult(stream, (sessionId) => {
-        this.lastSessionId = sessionId;
+        if (options.resume !== false) {
+          this.lastSessionId = sessionId;
+        }
       });
     } catch (error) {
       return {

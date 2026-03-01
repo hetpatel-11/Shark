@@ -35,14 +35,7 @@
 - Add KPI tracking, incident detection, and retry logic.
 - Add public-action logging and Slack summaries.
 
-## Phase 6: operator UI
-
-- Build the Vercel-hosted control dashboard.
-- Mirror Slack-visible state in the UI.
-- Add live run feed, current task, approvals, and interrupt controls.
-- Add drill-down views for events, artifacts, and memory references.
-
-## Phase 7: hardening
+## Phase 6: hardening
 
 - Add crash recovery and idempotent retries.
 - Add policy enforcement for blocked financial actions.

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Shark logo">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#9BE7FF"/>
+      <stop offset="50%" stop-color="#41BBFF"/>
+      <stop offset="100%" stop-color="#0B79D0"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0%" y1="20%" x2="100%" y2="80%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E6F9FF"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#bg)"/>
+
+  <path
+    fill="url(#body)"
+    d="M96 278c30-63 98-109 173-114l48-54c5-6 16-4 19 4l11 34c16 4 30 10 43 17l39-13c8-3 16 5 12 13l-19 41c18 23 27 49 27 77 0 29-10 56-29 78l17 40c4 8-4 16-12 13l-38-13c-13 8-28 14-44 18l-10 31c-3 8-14 10-19 4l-48-53c-78-2-149-49-180-116l-31 31c-8 8-22 1-20-10l8-47-42-22c-9-5-9-18 0-23l42-22-8-47c-2-11 12-18 20-10l41 40zm76-9c0 50 41 91 91 91 43 0 80-31 89-73h-63c-5 0-10-2-13-6l-11-15-17 34c-2 4-7 7-11 7h-31c-8 0-14-6-14-14s6-14 14-14h22l25-49c2-5 7-8 13-8 5 0 10 2 13 6l17 22h56c-10-39-46-67-88-67-50 0-91 41-91 91z"
+  />
+
+  <path
+    fill="#D4F5FF"
+    d="M252 307l17-34 11 15c3 4 8 6 13 6h59c-7 18-20 34-36 46-18 14-41 22-64 22-34 0-64-16-82-42h68c5 0 10-3 14-8z"
+  />
+
+  <circle cx="307" cy="237" r="9" fill="#0B79D0"/>
+
+  <path
+    fill="#0B79D0"
+    d="M365 249c0 4-3 7-7 7h-17c-4 0-7-3-7-7s3-7 7-7h17c4 0 7 3 7 7z"
+    opacity=".75"
+  />
+
+  <path
+    fill="#0B79D0"
+    d="M373 283l-14 8-13-8-13 8-13-8-13 8-13-8-14 8c-3 2-7-1-5-5l11-22h76l11 22c2 4-2 7-5 5z"
+    opacity=".8"
+  />
+</svg>

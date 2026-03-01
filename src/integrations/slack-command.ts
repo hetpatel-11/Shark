@@ -3,22 +3,43 @@ export function normalizeSlackOperatorCommand(message: unknown): string {
   const command = extractCommand(typeof payload.text === "string" ? payload.text : "");
   const attachments = extractAttachmentReferences(payload);
 
-  if (!command && attachments.length === 0) {
-    return "";
+  return combineCommandAndAttachments(command, attachments);
+}
+
+export function normalizeChatSdkOperatorCommand(
+  text: string,
+  attachments: Array<{
+    name?: string;
+    mimeType?: string;
+    url?: string;
+  }> = [],
+): string {
+  const command = extractCommand(text);
+  const references = attachments
+    .map((attachment) => {
+      if (!attachment.url) {
+        return "";
+      }
+
+      const name = attachment.name ?? "attachment";
+      const mimeType = attachment.mimeType ?? "unknown";
+      return `${name} (${mimeType}) ${attachment.url}`;
+    })
+    .filter(Boolean);
+
+  for (const url of extractUrls(text)) {
+    if (!references.some((value) => value.includes(url))) {
+      references.push(url);
+    }
   }
 
-  if (attachments.length === 0) {
-    return command;
-  }
-
-  const attachmentLines = attachments.map((attachment) => `- ${attachment}`);
-  const prefix = command ? `${command}\n\n` : "";
-  return `${prefix}Operator-provided attachments:\n${attachmentLines.join("\n")}`;
+  return combineCommandAndAttachments(command, references);
 }
 
 function extractCommand(text: string): string {
   return text
     .replace(/<@[^>]+>/g, "")
+    .replace(/^@\S+\s+/, "")
     .trim();
 }
 
@@ -67,4 +88,18 @@ function pickFirstString(
 function extractUrls(text: string): string[] {
   const matches = text.match(/https?:\/\/\S+/g) ?? [];
   return matches.map((value) => value.replace(/[)>.,]+$/g, ""));
+}
+
+function combineCommandAndAttachments(command: string, attachments: string[]): string {
+  if (!command && attachments.length === 0) {
+    return "";
+  }
+
+  if (attachments.length === 0) {
+    return command;
+  }
+
+  const attachmentLines = attachments.map((attachment) => `- ${attachment}`);
+  const prefix = command ? `${command}\n\n` : "";
+  return `${prefix}Operator-provided attachments:\n${attachmentLines.join("\n")}`;
 }
