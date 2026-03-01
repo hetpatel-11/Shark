@@ -1,76 +1,135 @@
 # Shark
 
-Shark is a production-oriented autonomous founder and operator that runs continuously inside Daytona. It uses Claude Agent SDK as the control brain, chooses from a toolset at runtime, and keeps building and operating an AI-native startup with long-term memory, durable state, and human steering through Slack.
+![Shark hero](./screenshots/shark-hero.png)
 
-## Core principles
+Shark is a 24/7 autonomous founder agent built for hackathons and 0-person startups. It researches markets, picks an opportunity, writes and ships product, runs customer support, handles operator interrupts in Slack, and deploys the resulting business to production.
 
-- All execution happens inside Daytona in production. No local control plane is required.
-- Claude Agent SDK is the single decision-maker. Tools remain loosely coupled and selectable at runtime.
-- The system is autonomous by default, but it must notify the operator of important milestones and accept interrupts immediately.
-- The agent can deploy and post publicly without approval, but it cannot spend money or create paid commitments without an explicit operator approval.
-- Startup selection happens after market research. Once a startup is chosen, Shark commits to it and iterates instead of thrashing across ideas.
+The current live company it built is **BoardPack**: an AI board pack and investor update generator for founder-led companies.
 
-## Planned stack
+- Live product: [boardpack-three.vercel.app](https://boardpack-three.vercel.app)
+- Core runtime: Claude Agent SDK running inside a Daytona sandbox
+- Control surface: Slack Socket Mode with real-time interruption
 
-- Brain: Anthropic Claude via Claude Agent SDK
-- Long-term memory: Supermemory
-- Realtime state and operator control: Convex
-- Browser execution and research: Browser Use
-- Authenticated inbox and outbound mail: AgentMail
-- Sandboxed execution: Daytona
-- Deployment: Vercel
-- Operator messaging: Slack
+## Architecture
 
-## Repo layout
+![Runtime architecture](./screenshots/runtime-architecture.png)
 
-- `ARCHITECTURE.md`: production system contract and runtime design
-- `IMPLEMENTATION_PLAN.md`: staged build plan
-- `PROMPT_plan.md`: planning-mode prompt for Ralph-style iterations
-- `PROMPT_build.md`: implementation-mode prompt for Ralph-style iterations
-- `PROMPT_operate.md`: operations-mode prompt for post-launch iteration
+Shark follows a Ralph-style loop:
+
+1. Observe state, operator directives, and memory
+2. Plan or rewrite the runtime implementation plan
+3. Build one high-leverage task at a time
+4. Report meaningful milestones back to Slack
+
+The agent is persistent, but each loop is intentionally bounded and stateful:
+
+- `Supermemory` stores long-term semantic memory
+- `Convex` stores realtime run state and telemetry
+- `AgentMail` gives the agent an inbox and email surface
+- `Browser Use` handles browser research and UI automation
+- `Vercel` deploys the products Shark ships
+- `Daytona` is the isolated execution sandbox
+
+## Stack Used
+
+This repo is built around the stack we actually used:
+
+- `@anthropic-ai/claude-agent-sdk` for the agent brain and tool loop
+- `Daytona` for sandboxed 24/7 execution
+- `Supermemory` for long-term memory and recall
+- `Convex` for durable run state
+- `Browser Use` for research and browser automation
+- `AgentMail` for inboxes, outreach, and inbound email workflows
+- `Vercel` for product deployment
+- `Slack Socket Mode` for real-time operator steering
+- `TypeScript` for the runtime and control plane
+
+## What Shark Has Already Done
+
+Shark has already demonstrated end-to-end autonomous startup behavior in this repo:
+
+- Chose and built **BoardPack**, an AI board pack product
+- Deployed the product to Vercel
+- Wired a live Anthropic-backed generation endpoint
+- Generated launch content and social posts
+- Used Browser Use to navigate real external workflows
+- Used AgentMail for outbound and inbound communication
+- Accepted live steering instructions over Slack while running
+
+## Proof Gallery
+
+### Product
+
+![BoardPack landing page](./screenshots/boardpack-landing-page.png)
+
+![BoardPack connectors](./screenshots/boardpack-connectors.png)
+
+### Operator Control
+
+![Slack operator thread](./screenshots/slack-operator-thread.png)
+
+### Browser and Email Workflows
+
+![AgentMail customer support](./screenshots/agentmail-customer-support.png)
+
+![AgentMail investor outreach](./screenshots/agentmail-investor-outreach.png)
+
+![Browser Use YC automation](./screenshots/browser-use-yc-automation.png)
+
+![X launch post](./screenshots/x-launch-post.png)
+
+### Memory and Persistence
+
+![Supermemory graph](./screenshots/supermemory-graph.png)
+
+### Additional Hackathon Artifacts
+
+![YC application demo video](./screenshots/yc-application-demo-video.png)
+
+![YC submission confirmation](./screenshots/yc-submission-confirmation.png)
+
+## Repo Layout
+
+- `ARCHITECTURE.md`: system contract and runtime design
+- `IMPLEMENTATION_PLAN.md`: top-level staged build plan
+- `PROMPT_plan.md`: planning-mode Ralph prompt
+- `PROMPT_build.md`: building-mode Ralph prompt
+- `PROMPT_operate.md`: operating-mode Ralph prompt
 - `AGENTS.md`: repo-specific execution rules and validation commands
-- `src/`: TypeScript contracts and loop scaffolding
+- `convex/`: Convex schema and functions
+- `src/`: TypeScript runtime, adapters, deployment scripts, and tests
+- `screenshots/`: hackathon assets and proof screenshots
 
-## Current status
+## Run It
 
-This repository now includes a runnable Shark control plane:
-
-- a persistent autonomous loop
-- real HTTP adapters for Anthropic, Supermemory, Browser Use, AgentMail, Slack, and Vercel
-- command execution inside the current runtime for Daytona-style sandbox work
-- a Slack-first control surface and JSON API
-- artifact persistence under `.shark/workspace`
-
-## Run it
-
-1. Copy `.env.example` to `.env.local` or export the variables in your shell.
+1. Copy `.env.example` to `.env.local` or export the required secrets.
 2. Add the provider credentials you want Shark to use.
-3. For a remote-first launch, run `npm run deploy:daytona` to build and start Shark inside a Daytona sandbox.
-4. For direct runtime testing only, use `npm run dev` or `npm run build && npm start`.
+3. Sync Convex: `npm run deploy:convex`
+4. Launch remotely in Daytona: `npm run deploy:daytona`
 
-## Remote deployment
+For local development only:
 
-`npm run deploy:daytona` will:
+- `npm run dev`
+- `npm run build && npm start`
 
-- create a fresh Daytona sandbox
-- upload the Shark source tree
-- install Bun inside Daytona
-- run `bun install` and `bun run build` inside Daytona
-- start the control plane remotely with `bun run start`
-- print a Daytona preview URL for the live runtime
+## Validation
 
-This is the intended production-style path. The long-running worker should live in Daytona, not on the operator’s machine.
+- `npm run typecheck`
+- `npm run build`
+- `npm run test`
+- `npm run smoke`
 
-## HTTP endpoints
+## Runtime Endpoints
 
-- `GET /healthz`: health probe
-- `GET /api/state`: current run snapshot
-- `POST /api/run-once`: execute one loop iteration
-- `POST /api/start`: start continuous execution
-- `POST /api/stop`: stop continuous execution
-- `POST /slack/events`: Slack webhook for operator mentions and thread replies
-- `POST /agentmail/webhooks`: AgentMail webhook for inbound email events
+- `GET /healthz`
+- `GET /api/state`
+- `POST /api/run-once`
+- `POST /api/start`
+- `POST /api/stop`
+- `POST /agentmail/webhooks`
 
-## Implementation note
+## Notes
 
-The runtime is end-to-end functional today with file-backed durable state. Convex-specific generated APIs are not checked into this repository because they depend on your app deployment and are generated by `npx convex dev`. The current service is structured so Convex can replace the file store cleanly.
+- Shark is designed to run in Daytona, not on the operator's machine.
+- Convex generated files are not committed because they depend on your deployment and are produced by `npx convex dev`.
+- The control surface is Slack-first. The runtime is built to accept live interrupts while keeping the autonomous loop running.

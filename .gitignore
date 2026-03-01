@@ -1,4 +1,5 @@
 plan.md
+.DS_Store
 .env
 .env.local
 .env.*.local
