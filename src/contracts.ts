@@ -126,6 +126,8 @@ export interface SharkEvent {
 
 export interface RunState {
   runId: string;
+  startedAt: string;
+  totalAgentTurns: number;
   mode: SharkMode;
   thesis?: VentureThesis;
   currentTask?: Task;
@@ -155,12 +157,15 @@ export interface ProviderHealth {
 
 export interface DashboardSnapshot {
   runId: string;
+  startedAt: string;
+  totalAgentTurns: number;
   mode: SharkMode;
   isRunning: boolean;
   thesis?: VentureThesis;
   mailboxAddress?: string;
   currentTask?: Task;
   pendingTasks: Task[];
+  recentTasks: Task[];
   pendingApproval?: ApprovalRequest;
   providerHealth: Partial<Record<ToolName, ProviderHealth>>;
   queuedCommands: OperatorCommand[];

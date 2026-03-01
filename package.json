@@ -9,7 +9,6 @@
     "build": "tsc -p tsconfig.json",
     "deploy:convex": "npx convex deploy -y --typecheck disable",
     "deploy:daytona": "tsx src/deploy/daytona.ts",
-    "deploy:ui": "tsx src/deploy/vercel-ui.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
@@ -22,6 +21,7 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.63",
     "@chat-adapter/slack": "^4.15.0",
     "@chat-adapter/state-memory": "^4.15.0",
     "@daytonaio/sdk": "^0.148.0",

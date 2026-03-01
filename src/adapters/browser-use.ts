@@ -9,6 +9,7 @@ interface BrowserUseTaskResponse {
   liveUrl?: string;
   sessionId?: string;
   error?: string;
+  detail?: string;
 }
 
 export class BrowserUseAdapter {
@@ -24,7 +25,7 @@ export class BrowserUseAdapter {
     }
 
     return this.health(
-      "Configured. Browser Use reachability is validated on the first real task.",
+      "Configured. Browser Use v2 reachability is validated on the first real task.",
       true,
     );
   }
@@ -37,19 +38,37 @@ export class BrowserUseAdapter {
     }
 
     const response = await requestJson<BrowserUseTaskResponse>(
-      "https://api.browser-use.com/api/v1/run-task",
+      "https://api.browser-use.com/api/v2/tasks",
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${this.config.browserUseApiKey}`,
+          "X-Browser-Use-API-Key": this.config.browserUseApiKey,
         },
         body: {
           task,
+          maxSteps: 20,
         },
       },
     );
 
-    return response.data ?? { status: response.error ?? "failed" };
+    if (!response.ok) {
+      return {
+        status: "failed",
+        error: response.data?.detail ?? response.error ?? "Browser Use request failed",
+      };
+    }
+
+    if (!response.data?.id && !response.data?.task_id) {
+      return {
+        status: "failed",
+        error: response.data?.detail ?? "Browser Use did not return a task id",
+      };
+    }
+
+    return {
+      ...response.data,
+      status: response.data.status ?? "queued",
+    };
   }
 
   private health(message: string, ok: boolean): ProviderHealth {

@@ -7,6 +7,34 @@ interface SlackPostResponse {
   error?: string;
 }
 
+interface SlackTextObject {
+  type: "plain_text" | "mrkdwn";
+  text: string;
+  emoji?: boolean;
+}
+
+type SlackBlock =
+  | {
+      type: "header";
+      text: SlackTextObject;
+    }
+  | {
+      type: "section";
+      text: SlackTextObject;
+      fields?: SlackTextObject[];
+    }
+  | {
+      type: "context";
+      elements: SlackTextObject[];
+    }
+  | {
+      type: "divider";
+    };
+
+interface SlackMessageOptions {
+  blocks?: SlackBlock[];
+}
+
 export class SlackAdapter {
   constructor(private readonly config: SharkConfig) {}
 
@@ -14,7 +42,7 @@ export class SlackAdapter {
     return Boolean(this.config.slackBotToken && this.config.slackChannel);
   }
 
-  async postMessage(text: string): Promise<SlackPostResponse> {
+  async postMessage(text: string, options: SlackMessageOptions = {}): Promise<SlackPostResponse> {
     if (!this.config.slackBotToken || !this.config.slackChannel) {
       return {
         ok: false,
@@ -32,6 +60,9 @@ export class SlackAdapter {
         body: {
           channel: this.config.slackChannel,
           text,
+          blocks: options.blocks,
+          unfurl_links: false,
+          unfurl_media: false,
         },
       },
     );

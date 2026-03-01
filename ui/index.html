@@ -6,25 +6,25 @@
   <title>Shark Ops</title>
   <style>
     :root {
-      --bg: #f7f3ef;
-      --bg-2: #efe7dd;
-      --panel: rgba(255, 252, 248, 0.88);
-      --panel-strong: rgba(255, 255, 255, 0.96);
-      --ink: #241b19;
-      --muted: #746560;
-      --line: rgba(126, 101, 87, 0.18);
-      --accent: #e88f8f;
-      --accent-strong: #d96767;
-      --accent-soft: rgba(232, 143, 143, 0.12);
-      --shadow: 0 22px 60px rgba(80, 55, 42, 0.12);
+      --bg: #edf7ff;
+      --bg-2: #dceeff;
+      --panel: rgba(247, 252, 255, 0.88);
+      --panel-strong: rgba(255, 255, 255, 0.97);
+      --ink: #0d2436;
+      --muted: #58748b;
+      --line: rgba(63, 128, 170, 0.16);
+      --accent: #4fb7ff;
+      --accent-strong: #1187d9;
+      --accent-soft: rgba(79, 183, 255, 0.1);
+      --shadow: 0 22px 60px rgba(30, 103, 150, 0.12);
     }
     body {
       margin: 0;
       font-family: "Avenir Next", "Nunito Sans", "Helvetica Neue", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(circle at top center, rgba(232, 143, 143, 0.22), transparent 28%),
-        radial-gradient(circle at left 18%, rgba(255, 255, 255, 0.8), transparent 30%),
+        radial-gradient(circle at top center, rgba(79, 183, 255, 0.22), transparent 28%),
+        radial-gradient(circle at left 18%, rgba(255, 255, 255, 0.82), transparent 30%),
         linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
       min-height: 100vh;
     }
@@ -34,7 +34,7 @@
       padding: 22px;
     }
     .shell {
-      background: rgba(255, 250, 246, 0.78);
+      background: rgba(242, 250, 255, 0.8);
       border: 1px solid var(--line);
       border-radius: 28px;
       box-shadow: var(--shadow);
@@ -49,7 +49,7 @@
       gap: 16px;
       padding: 18px 22px;
       border-bottom: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.46);
+      background: rgba(255, 255, 255, 0.54);
     }
     .brand {
       display: flex;
@@ -57,13 +57,18 @@
       gap: 12px;
     }
     .brand-mark {
-      width: 40px;
-      height: 40px;
-      border-radius: 14px;
-      background:
-        radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9), transparent 32%),
-        linear-gradient(135deg, var(--accent), var(--accent-strong));
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.65);
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      border-radius: 16px;
+      background: linear-gradient(160deg, rgba(255,255,255,0.98), rgba(227,244,255,0.9));
+      border: 1px solid rgba(63, 128, 170, 0.14);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.92);
+    }
+    .brand-mark svg {
+      width: 34px;
+      height: 34px;
     }
     .brand h1,
     .panel-title {
@@ -84,7 +89,7 @@
       border: 1px solid var(--line);
       border-radius: 999px;
       padding: 10px 16px;
-      box-shadow: 0 6px 20px rgba(80, 55, 42, 0.08);
+      box-shadow: 0 6px 20px rgba(30, 103, 150, 0.08);
       font-size: 14px;
     }
     .capsule strong {
@@ -112,7 +117,7 @@
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 22px;
-      box-shadow: 0 10px 30px rgba(80, 55, 42, 0.08);
+      box-shadow: 0 10px 30px rgba(30, 103, 150, 0.08);
       backdrop-filter: blur(12px);
     }
     .summary-card {
@@ -123,8 +128,7 @@
       font-size: 22px;
     }
     .status-row,
-    .meta-grid,
-    .control-row {
+    .meta-grid {
       display: flex;
       flex-wrap: wrap;
       gap: 10px;
@@ -167,14 +171,11 @@
       color: var(--muted);
       font-size: 13px;
     }
-    .control-row {
-      margin-top: 14px;
-    }
     button {
       border: 0;
       border-radius: 999px;
       padding: 11px 15px;
-      background: #1f1d1d;
+      background: #103d60;
       color: white;
       font: inherit;
       cursor: pointer;
@@ -211,10 +212,10 @@
     }
     .feed-card {
       background: var(--panel-strong);
-      border: 1px solid rgba(126, 101, 87, 0.12);
+      border: 1px solid rgba(63, 128, 170, 0.12);
       border-radius: 20px;
       padding: 14px 16px;
-      box-shadow: 0 10px 24px rgba(80, 55, 42, 0.06);
+      box-shadow: 0 10px 24px rgba(30, 103, 150, 0.06);
     }
     .feed-card p {
       margin: 8px 0 0;
@@ -242,7 +243,7 @@
       position: sticky;
       bottom: 0;
       padding-top: 4px;
-      background: linear-gradient(180deg, rgba(247,243,239,0) 0%, rgba(247,243,239,0.92) 24%);
+      background: linear-gradient(180deg, rgba(237,247,255,0) 0%, rgba(237,247,255,0.94) 24%);
     }
     .composer {
       padding: 14px;
@@ -281,7 +282,7 @@
       display: grid;
       gap: 16px;
       align-content: start;
-      background: rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.24);
     }
     .side-card {
       padding: 18px;
@@ -296,11 +297,15 @@
       display: grid;
       gap: 10px;
     }
+    .task-checklist {
+      display: grid;
+      gap: 10px;
+    }
     .task-item {
       padding: 12px 13px;
       border-radius: 18px;
-      border: 1px solid rgba(126, 101, 87, 0.12);
-      background: rgba(255,255,255,0.7);
+      border: 1px solid rgba(63, 128, 170, 0.12);
+      background: rgba(255,255,255,0.78);
     }
     .task-item strong {
       display: block;
@@ -314,6 +319,82 @@
       gap: 8px;
       font-size: 12px;
       color: var(--muted);
+    }
+    .task-item.check {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      align-items: start;
+    }
+    .check-dot {
+      width: 18px;
+      height: 18px;
+      margin-top: 2px;
+      border-radius: 50%;
+      border: 1.5px solid rgba(17, 135, 217, 0.22);
+      background: rgba(255,255,255,0.9);
+      display: grid;
+      place-items: center;
+      color: #1187d9;
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .check-dot.done {
+      background: rgba(17, 135, 217, 0.12);
+      border-color: rgba(17, 135, 217, 0.18);
+    }
+    .check-label {
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .report-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 13px;
+    }
+    .report-title strong {
+      font-size: 14px;
+    }
+    .report-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      background: rgba(79, 183, 255, 0.12);
+      color: var(--accent-strong);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .report-badge.blocked {
+      background: rgba(219, 87, 87, 0.1);
+      color: #b74242;
+    }
+    .report-list {
+      margin: 10px 0 0;
+      padding: 0;
+      display: grid;
+      gap: 8px;
+      list-style: none;
+    }
+    .report-list li {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      align-items: start;
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--ink);
+    }
+    .report-list li::before {
+      content: "•";
+      color: var(--accent-strong);
+      font-weight: 800;
+      line-height: 1.2;
     }
     .score {
       display: grid;
@@ -368,7 +449,21 @@
     <section class="shell">
       <header class="topbar">
         <div class="brand">
-          <div class="brand-mark"></div>
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M9 34C17 17 35 12 54 16C47 20 43 26 42 31C46 31 51 33 56 39C47 40 42 43 38 48C36 42 31 39 24 39C20 39 15 37 9 34Z" fill="url(#sharkBody)"/>
+              <path d="M27 22L34 13L37 24" fill="#A9DFFF"/>
+              <path d="M42 28C46 26 50 26 55 28C51 30 48 33 46 36" fill="#0B6FB8"/>
+              <circle cx="41" cy="24" r="2.2" fill="#0D2436"/>
+              <path d="M31 33C34 35 38 36 43 35" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round"/>
+              <defs>
+                <linearGradient id="sharkBody" x1="10" y1="16" x2="54" y2="48" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#67C7FF"/>
+                  <stop offset="1" stop-color="#1187D9"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
           <div>
             <h1>Shark</h1>
             <p id="subtitle">Connecting to remote runtime...</p>
@@ -392,18 +487,13 @@
             <h2 id="headline">Loading startup thesis...</h2>
             <p class="muted" id="summary">Waiting for Shark state.</p>
             <div class="meta-grid" id="meta"></div>
-            <div class="control-row">
-              <button onclick="runAction('/api/start')">Start</button>
-              <button class="secondary" onclick="runAction('/api/stop')">Pause</button>
-              <button class="accent" onclick="runAction('/api/run-once')">Run Once</button>
-            </div>
           </article>
 
           <section class="feed" id="events"></section>
 
           <div class="composer-wrap">
             <form class="composer" onsubmit="sendCommand(event)">
-              <p class="composer-label">Steer Shark in real time. It will queue your instruction and continue autonomously.</p>
+              <p class="composer-label">Steer Shark here. Slack instructions and Shark's Slack updates are mirrored into the same feed.</p>
               <div class="composer-row">
                 <textarea id="command" placeholder="Steer Shark: focus on pricing, ship the landing page, message VCs, tighten onboarding..."></textarea>
                 <button class="accent send" type="submit">Send</button>
@@ -416,6 +506,11 @@
           <article class="side-card">
             <div class="panel-title">Startup Thesis</div>
             <div id="thesis"></div>
+          </article>
+
+          <article class="side-card">
+            <div class="panel-title">Execution Checklist</div>
+            <div class="task-checklist" id="checklist"></div>
           </article>
 
           <article class="side-card">

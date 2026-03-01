@@ -1,52 +1,68 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
+
 import { SHARK_RUNTIME_URL } from "./runtime-target";
 
-function buildTarget(pathname: string): URL {
-  return new URL(pathname, ensureTrailingSlash(SHARK_RUNTIME_URL));
-}
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
 
-export async function proxyToRuntime(
-  request: Request,
-  pathname: string,
-): Promise<Response> {
-  const target = buildTarget(pathname);
-  const body = shouldIncludeBody(request.method) ? await request.text() : undefined;
-  const headers = cloneHeaders(request.headers);
+export function createProxyHandler(pathname: string) {
+  return async function proxyHandler(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    const target = new URL(pathname, ensureTrailingSlash(SHARK_RUNTIME_URL));
+    const method = request.method ?? "GET";
+    const body = shouldIncludeBody(method) ? await readBody(request) : undefined;
+    const headers = cloneHeaders(request.headers);
 
-  const upstream = await fetch(target, {
-    method: request.method,
-    headers,
-    body,
-  });
+    const upstream = await fetch(target, {
+      method,
+      headers,
+      body,
+    });
 
-  return passthrough(upstream);
+    response.statusCode = upstream.status;
+    upstream.headers.forEach((value, key) => {
+      response.setHeader(key, value);
+    });
+    response.setHeader("Access-Control-Allow-Origin", "*");
+    response.end(await upstream.text());
+  };
 }
 
 function shouldIncludeBody(method: string): boolean {
   return method !== "GET" && method !== "HEAD";
 }
 
-function cloneHeaders(source: Headers): Headers {
+function cloneHeaders(
+  source: IncomingMessage["headers"],
+): Headers {
   const headers = new Headers();
-  source.forEach((value, key) => {
-    if (key.toLowerCase() === "host" || key.toLowerCase() === "content-length") {
-      return;
+  for (const [key, value] of Object.entries(source)) {
+    if (!value) {
+      continue;
     }
 
-    headers.set(key, value);
-  });
+    if (key.toLowerCase() === "host" || key.toLowerCase() === "content-length") {
+      continue;
+    }
+
+    headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+  }
   return headers;
 }
 
-async function passthrough(upstream: Response): Promise<Response> {
-  const body = await upstream.text();
-  const headers = new Headers();
-  upstream.headers.forEach((value, key) => {
-    headers.set(key, value);
-  });
-  headers.set("Access-Control-Allow-Origin", "*");
-  return new Response(body, {
-    status: upstream.status,
-    headers,
+async function readBody(request: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    request.on("data", (chunk: Buffer | string) => {
+      body += chunk.toString();
+    });
+    request.on("end", () => resolve(body));
+    request.on("error", reject);
   });
 }
 

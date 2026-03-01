@@ -5,7 +5,6 @@ import { basename, join, posix, relative } from "node:path";
 import { CodeLanguage, Daytona } from "@daytonaio/sdk";
 
 import { loadConfig } from "../config.js";
-import { deployVercelUi } from "./vercel-ui.js";
 
 const config = loadConfig();
 const deploymentEnv = loadDeploymentEnv();
@@ -38,37 +37,41 @@ const remoteRoot = "shark";
 await sandbox.fs.createFolder(remoteRoot, "755");
 await uploadPath(sandbox, "src", remoteRoot);
 
-for (const file of ["package.json", "package-lock.json", "tsconfig.json"]) {
-  await sandbox.fs.uploadFile(file, posix.join(remoteRoot, basename(file)));
+for (const file of ["package.json", "pnpm-lock.yaml", "bun.lock", "tsconfig.json"]) {
+  if (existsSync(file)) {
+    await sandbox.fs.uploadFile(file, posix.join(remoteRoot, basename(file)));
+  }
 }
 
 process.stdout.write(`Created sandbox ${sandbox.id}\n`);
-process.stdout.write("Installing dependencies in Daytona...\n");
-await runRemoteCommand(sandbox, "npm install", remoteRoot, 900);
-
-process.stdout.write("Building Shark in Daytona...\n");
-await runRemoteCommand(sandbox, "npm run build", remoteRoot, 900);
-
-process.stdout.write("Starting Shark control plane in Daytona...\n");
+process.stdout.write("Installing Bun in Daytona...\n");
 await runRemoteCommand(
   sandbox,
-  "nohup npm start > shark.log 2>&1 &",
+  "bash -lc 'command -v bun >/dev/null 2>&1 || (curl -fsSL https://bun.sh/install | bash)'",
+  remoteRoot,
+  900,
+);
+
+process.stdout.write("Installing dependencies in Daytona with Bun...\n");
+await runRemoteCommand(sandbox, "bash -lc 'export PATH=$HOME/.bun/bin:$PATH && bun install'", remoteRoot, 900);
+
+process.stdout.write("Building Shark in Daytona with Bun...\n");
+await runRemoteCommand(sandbox, "bash -lc 'export PATH=$HOME/.bun/bin:$PATH && bun run build'", remoteRoot, 900);
+
+process.stdout.write("Starting Shark control plane in Daytona with Bun...\n");
+await runRemoteCommand(
+  sandbox,
+  "bash -lc 'export PATH=$HOME/.bun/bin:$PATH && nohup bun run start > shark.log 2>&1 < /dev/null & sleep 1'",
   remoteRoot,
   60,
 );
 
-await sleep(5000);
-const preview = await sandbox.getPreviewLink(config.port);
+const preview = await waitForPreviewLink(sandbox, config.port, 12, 10_000);
+await waitForHealthz(preview.url, 90_000);
 
 process.stdout.write(`Sandbox ID: ${sandbox.id}\n`);
 process.stdout.write(`Preview URL: ${preview.url}\n`);
 process.stdout.write(`Preview Token: ${preview.token}\n`);
-
-if (config.vercelToken) {
-  process.stdout.write("Deploying operator UI to Vercel...\n");
-  const uiUrl = await deployVercelUi(preview.url, config.vercelToken);
-  process.stdout.write(`Vercel UI URL: ${uiUrl}\n`);
-}
 
 process.stdout.write("Shark is now running remotely inside Daytona.\n");
 
@@ -121,7 +124,7 @@ function collectRuntimeEnv(): Record<string, string> {
   const runtimeEnv: Record<string, string> = {
     NODE_ENV: "production",
     PORT: String(config.port),
-    SHARK_AUTOSTART: "true",
+    SHARK_AUTOSTART: String(config.autoStart),
     SHARK_LOOP_INTERVAL_MS: String(config.loopIntervalMs),
     SHARK_STATE_FILE: ".shark/state.json",
     SHARK_WORKSPACE_DIR: ".shark/workspace",
@@ -218,4 +221,71 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function waitForPreviewLink(
+  sandboxRef: typeof sandbox,
+  port: number,
+  attempts: number,
+  timeoutMs: number,
+): Promise<{ url: string; token?: string }> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await withTimeout(sandboxRef.getPreviewLink(port), timeoutMs);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await sleep(2_000);
+      }
+    }
+  }
+
+  throw new Error(
+    `Unable to retrieve preview link for sandbox ${sandboxRef.id} on port ${port}: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+  );
+}
+
+async function waitForHealthz(previewUrl: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = "preview not ready";
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(new URL("/healthz", previewUrl));
+      if (response.ok) {
+        return;
+      }
+
+      lastError = `healthz returned ${response.status}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+
+    await sleep(3_000);
+  }
+
+  throw new Error(`Preview did not become healthy in time: ${lastError}`);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`Timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }

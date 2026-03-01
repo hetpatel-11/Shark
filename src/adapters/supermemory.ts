@@ -8,7 +8,15 @@ interface SupermemoryAddResponse {
 
 interface SupermemorySearchResponse {
   total?: number;
-  results?: Array<Record<string, unknown>>;
+  results?: Array<{
+    title?: string;
+    score?: number;
+    chunks?: Array<{
+      content?: string;
+      score?: number;
+      isRelevant?: boolean;
+    }>;
+  }>;
 }
 
 export class SupermemoryAdapter {
@@ -67,6 +75,27 @@ export class SupermemoryAdapter {
     );
 
     return response.data ?? { total: 0, results: [] };
+  }
+
+  async recallSnippets(q: string, containerTag: string, limit = 3): Promise<string[]> {
+    const response = await this.search(q, containerTag);
+    const snippets: string[] = [];
+
+    for (const result of response.results ?? []) {
+      for (const chunk of result.chunks ?? []) {
+        const content = chunk.content?.trim();
+        if (!content) {
+          continue;
+        }
+
+        snippets.push(content);
+        if (snippets.length >= limit) {
+          return snippets;
+        }
+      }
+    }
+
+    return snippets;
   }
 
   health(): ProviderHealth {

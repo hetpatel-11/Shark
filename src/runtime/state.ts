@@ -12,6 +12,8 @@ import {
 export function createInitialRunState(runId: string): RunState {
   return {
     runId,
+    startedAt: new Date().toISOString(),
+    totalAgentTurns: 0,
     mode: "discovery",
     tasks: [],
     queuedCommands: [],
@@ -99,6 +101,41 @@ export function completeTask(state: RunState, summary: string): RunState {
   });
 }
 
+export function failTask(state: RunState, summary: string): RunState {
+  if (!state.currentTask) {
+    return state;
+  }
+
+  const updatedAt = new Date().toISOString();
+  const next: RunState = {
+    ...state,
+    currentTask: {
+      ...state.currentTask,
+      status: "failed",
+      output: summary,
+      updatedAt,
+    },
+    tasks: state.tasks.map((item) =>
+      item.id === state.currentTask?.id
+        ? {
+            ...item,
+            status: "failed",
+            output: summary,
+            updatedAt,
+          }
+        : item,
+    ),
+  };
+
+  return withEvent(next, {
+    id: createEventId("task"),
+    kind: "task_failed",
+    message: summary,
+    timestamp: new Date().toISOString(),
+    metadata: { taskId: state.currentTask.id },
+  });
+}
+
 export function blockForApproval(
   state: RunState,
   approval: ApprovalRequest,
@@ -161,7 +198,7 @@ export function clearCommands(state: RunState): RunState {
 }
 
 export function withEvent(state: RunState, event: SharkEvent): RunState {
-  const recentEvents = [event, ...state.recentEvents].slice(0, 50);
+  const recentEvents = [event, ...state.recentEvents].slice(0, 200);
   const nextMode = event.kind === "mode_changed"
     ? extractMode(event.metadata?.nextMode)
     : state.mode;

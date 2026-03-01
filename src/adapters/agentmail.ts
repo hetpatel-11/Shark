@@ -3,12 +3,13 @@ import { requestJson } from "./http.js";
 
 interface AgentMailMailboxResponse {
   address?: string;
+  inbox_id?: string;
   created_at?: string;
   error?: string;
 }
 
 export class AgentMailAdapter {
-  private readonly baseUrl = "https://api.agentmail.email/v1";
+  private readonly baseUrl = "https://api.agentmail.to/v0";
 
   constructor(private readonly config: SharkConfig) {}
 
@@ -24,7 +25,7 @@ export class AgentMailAdapter {
     }
 
     const response = await requestJson<AgentMailMailboxResponse>(
-      `${this.baseUrl}/mailboxes`,
+      `${this.baseUrl}/inboxes`,
       {
         method: "POST",
         headers: {
@@ -34,7 +35,14 @@ export class AgentMailAdapter {
       },
     );
 
-    return response.data ?? { error: response.error ?? "Mailbox creation failed" };
+    if (!response.ok) {
+      return { error: response.error ?? "Mailbox creation failed" };
+    }
+
+    return {
+      ...response.data,
+      address: response.data?.address ?? response.data?.inbox_id,
+    };
   }
 
   health(): ProviderHealth {

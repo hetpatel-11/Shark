@@ -55,8 +55,9 @@ This repository now includes a runnable Shark control plane:
 
 - create a fresh Daytona sandbox
 - upload the Shark source tree
-- run `npm install` and `npm run build` inside Daytona
-- start the control plane remotely
+- install Bun inside Daytona
+- run `bun install` and `bun run build` inside Daytona
+- start the control plane remotely with `bun run start`
 - print a Daytona preview URL for the live dashboard
 
 This is the intended production-style path. The long-running worker should live in Daytona, not on the operator’s machine.

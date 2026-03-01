@@ -1,1 +1,1 @@
-export const SHARK_RUNTIME_URL = "https://3000-13a399f6-fe76-4b2e-860c-78ef026c40b5.proxy.daytona.works";
+export const SHARK_RUNTIME_URL = "https://3000-0fd33689-9a25-46d9-9d89-18f7ff4e34db.daytonaproxy01.net";

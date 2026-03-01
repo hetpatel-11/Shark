@@ -1,5 +1,5 @@
-import { proxyToRuntime } from "./_lib/proxy";
+import { config, createProxyHandler } from "./_lib/proxy";
 
-export default async function handler(request: Request): Promise<Response> {
-  return proxyToRuntime(request, "/api/run-once");
-}
+export { config };
+
+export default createProxyHandler("/api/run-once");

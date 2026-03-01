@@ -17,7 +17,6 @@ const engine = new SharkEngine(config, store);
 const slackBot = new SlackChatBot(
   config,
   (text, source) => engine.enqueueOperatorCommand(text, source),
-  () => engine.snapshot(),
 );
 
 const args = new Set(process.argv.slice(2));

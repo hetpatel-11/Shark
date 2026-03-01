@@ -18,7 +18,6 @@ export function renderDashboard(snapshot: DashboardSnapshot): string {
     .join("");
 
   const eventRows = snapshot.recentEvents
-    .slice(0, 12)
     .map(
       (event) => `
         <li><strong>${escapeHtml(event.kind)}</strong> ${escapeHtml(event.message)}<br><small>${escapeHtml(event.timestamp)}</small></li>`,
@@ -90,15 +89,12 @@ export function renderDashboard(snapshot: DashboardSnapshot): string {
     }
     button {
       border: 0;
-      border-radius: 999px;
-      padding: 10px 14px;
-      background: var(--accent-2);
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: var(--accent);
       color: white;
       cursor: pointer;
       font: inherit;
-    }
-    button.alt {
-      background: var(--accent);
     }
     input {
       width: min(420px, 100%);
@@ -160,13 +156,8 @@ export function renderDashboard(snapshot: DashboardSnapshot): string {
         <div>Last summary: ${escapeHtml(snapshot.lastSummary ?? "No iterations yet")}</div>
       </div>
       <div class="controls">
-        <button onclick="post('/api/start')">Start Loop</button>
-        <button class="alt" onclick="post('/api/run-once')">Run Once</button>
-        <button onclick="post('/api/stop')">Stop Loop</button>
-      </div>
-      <div class="controls">
         <input id="command" placeholder="Interrupt Shark: e.g. focus on B2B pricing page" />
-        <button class="alt" onclick="sendCommand()">Send Command</button>
+        <button onclick="sendCommand()">Send Command</button>
       </div>
     </section>
 
@@ -208,21 +199,17 @@ export function renderDashboard(snapshot: DashboardSnapshot): string {
     </section>
   </main>
   <script>
-    async function post(path, body) {
-      await fetch(path, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: body ? JSON.stringify(body) : '{}'
-      });
-      location.reload();
-    }
-
     async function sendCommand() {
       const input = document.getElementById('command');
       const text = input.value.trim();
       if (!text) return;
-      await post('/api/command', { text });
+      await fetch('/api/command', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ text })
+      });
       input.value = '';
+      location.reload();
     }
   </script>
 </body>
